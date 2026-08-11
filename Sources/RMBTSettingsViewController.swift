@@ -8,7 +8,7 @@
 
 import Foundation
 import UIKit
-import libextobjc
+import SwiftUI
 import MessageUI
 
 enum RMBTSettingsSection: Int {
@@ -72,7 +72,7 @@ class RMBTSettingsViewController: UITableViewController {
         
         prepareGeneralSettings()
         prepareAdvancedSettings()
-        
+
         self.title = NSLocalizedString("preferences_general_settings", comment: "")
         self.navigationItem.leftBarButtonItem = self.closeBarButtonItem
         
@@ -227,7 +227,7 @@ class RMBTSettingsViewController: UITableViewController {
         if settings.qosEnabled {
             self.generalSettings.append(IndexPath(row: 1, section: RMBTSettingsSection.general.rawValue))
         }
-        if !RMBTLocationTracker.isAuthorized() {
+        if !RMBTLocationTracker.shared.isAuthorized {
             self.generalSettings.append(IndexPath(row: 2, section: RMBTSettingsSection.general.rawValue))
         }
     }
@@ -246,6 +246,8 @@ class RMBTSettingsViewController: UITableViewController {
         
         if settings.expertMode {
             self.advancedSettings.append(IndexPath(row: 4, section: RMBTSettingsSection.advanced.rawValue))
+            // SIM Information (diagnostic) sits right below IPv4 only; both are expert-only.
+            self.advancedSettings.append(IndexPath(row: 5, section: RMBTSettingsSection.advanced.rawValue))
         }
     }
     
@@ -374,8 +376,6 @@ class RMBTSettingsViewController: UITableViewController {
         }
         if (section == RMBTSettingsSection.advanced.rawValue) {
             return self.advancedSettings.count
-        } else if (section == RMBTSettingsSection.advanced.rawValue && !settings.loopMode) {
-            return 1 // hide customization
         } else if (section == RMBTSettingsSection.debugCustomControlServer.rawValue && !settings.debugControlServerCustomizationEnabled) {
             return 1 // hide customization
         } else if (section == RMBTSettingsSection.logging.rawValue && !settings.debugLoggingEnabled) {
@@ -393,10 +393,16 @@ class RMBTSettingsViewController: UITableViewController {
         view.backgroundColor = UIColor.clear
         
         let label = RMBTTitleSectionLabel(text: title)
-        label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        label.frame = CGRect(x: 20, y: 0, width: view.bounds.size.width - 40, height: height)
+        label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
-        
+
+        let guide = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 20),
+            label.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: 20),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+
         return view
     }
 
@@ -485,10 +491,17 @@ class RMBTSettingsViewController: UITableViewController {
                        let url = URL(string: tosUrl) {
                        self.openURL(url)
                    }
+            case 3:
+                presentLogShareSheet(from: indexPath)
             default: break
             }
+        } else if (indexPath.section == RMBTSettingsSection.advanced.rawValue) {
+            // SIM Information is storyboard row 5 — the only tappable advanced row (others are toggles/fields).
+            if advancedSettings[indexPath.row].row == 5 {
+                presentSIMInfo()
+            }
         }
-        
+
         if let cell = tableView.cellForRow(at: indexPath),
            let textField = self.searchTextField(in: cell) {
             if !textField.isFirstResponder {
@@ -497,6 +510,39 @@ class RMBTSettingsViewController: UITableViewController {
         }
 
         tableView.deselectRow(at: indexPath, animated: true)
+    }
+
+    private func presentLogShareSheet(from indexPath: IndexPath) {
+        let logPath = LogConfig.getCurrentLogFilePath()
+        let logURL = URL(fileURLWithPath: logPath)
+        let fileManager = FileManager.default
+
+        do {
+            let directory = (logPath as NSString).deletingLastPathComponent
+            try fileManager.createDirectory(atPath: directory, withIntermediateDirectories: true)
+
+            if !fileManager.fileExists(atPath: logPath) {
+                let placeholder = "Log file created on \(ISO8601DateFormatter().string(from: Date()))\n"
+                try placeholder.data(using: .utf8)?.write(to: logURL)
+            }
+        } catch {
+            _ = UIAlertController.presentAlert(
+                title: NSLocalizedString("preferences_export_logs", comment: ""),
+                text: NSLocalizedString("preferences_export_logs_error", comment: ""),
+                cancelTitle: NSLocalizedString("input_setting_dialog_ok", comment: ""),
+                otherTitle: nil,
+                cancelAction: { _ in },
+                otherAction: nil
+            )
+            return
+        }
+
+        let activityVC = UIActivityViewController(activityItems: [logURL], applicationActivities: nil)
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = tableView
+            popover.sourceRect = tableView.rectForRow(at: indexPath)
+        }
+        present(activityVC, animated: true)
     }
     
     // MARK: - Tableview actions (copying UUID)
@@ -519,7 +565,7 @@ class RMBTSettingsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, performAction action: Selector, forRowAt indexPath: IndexPath, withSender sender: Any?) {
         if action == #selector(copy(_:)) {
             // Copy UUID to pasteboard
-            UIPasteboard.general.string = uuid
+            UIPasteboard.general.string = uuid.map { "U\($0)" } ?? "(UUID not available)"
         }
     }
 }
@@ -528,17 +574,42 @@ extension RMBTSettingsViewController {
     @objc func tapHandler(_ sender: UIGestureRecognizer) {
         _ = UIAlertController.presentAlertDevCode(nil, codeAction: { [weak self] (textField) in
             guard let self = self else { return }
-            
-            guard textField.text == RMBTConfig.ACTIVATE_DEV_CODE || textField.text == RMBTConfig.DEACTIVATE_DEV_CODE else { return }
-            
-            let isEnable = textField.text == RMBTConfig.ACTIVATE_DEV_CODE
-            self.settings.isDevModeEnabled = isEnable
-            self.settings.debugUnlocked = isEnable
-            if !isEnable {
-                self.settings.debugForceIPv6 = false
+            let code = textField.text ?? ""
+
+            // Developer mode codes (existing behavior)
+            if code == RMBTConfig.ACTIVATE_DEV_CODE || code == RMBTConfig.DEACTIVATE_DEV_CODE {
+                let isEnable = code == RMBTConfig.ACTIVATE_DEV_CODE
+                self.settings.isDevModeEnabled = isEnable
+                self.settings.debugUnlocked = isEnable
+                if !isEnable {
+                    self.settings.debugForceIPv6 = false
+                }
+                self.rebindLoopModeSettings()
+                self.tableView.reloadData()
+                return
             }
-            self.rebindLoopModeSettings()
-            self.tableView.reloadData()
+
+            // New: Network Coverage feature flag codes
+            if code == RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE || code == RMBTConfig.DEACTIVATE_COVERAGE_FEATURE_CODE {
+                let enableCoverage = code == RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE
+                self.settings.coverageFeatureEnabled = enableCoverage
+
+                // Confirmation alert with default system "OK" button
+                let title = NSLocalizedString("Network Coverage", comment: "Alert title for coverage feature toggle")
+                let message = enableCoverage
+                    ? NSLocalizedString("The Network Coverage feature has been enabled.", comment: "Coverage enabled message")
+                    : NSLocalizedString("The Network Coverage feature has been disabled.", comment: "Coverage disabled message")
+
+                _ = UIAlertController.presentAlert(title: title,
+                                                    text: message,
+                                                    cancelTitle: NSLocalizedString("input_setting_dialog_ok", comment: "OK button"),
+                                                    otherTitle: nil,
+                                                    cancelAction: { _ in },
+                                                    otherAction: nil)
+
+                // No immediate UI in Settings depends on this flag; Intro screen updates on return
+                return
+            }
         }, textFieldConfiguration: nil)
     }
     
@@ -549,6 +620,16 @@ extension RMBTSettingsViewController {
     
     @objc func closeButtonClick(_ sender: Any) {
         self.dismiss(animated: true)
+    }
+
+    func presentSIMInfo() {
+        let hostingController = UIHostingController(rootView: SIMInfoView())
+        hostingController.title = NSLocalizedString("preferences_sim_info", comment: "")
+        if let navigationController = self.navigationController {
+            navigationController.pushViewController(hostingController, animated: true)
+        } else {
+            present(hostingController, animated: true)
+        }
     }
     
     @objc func updateLogging() {

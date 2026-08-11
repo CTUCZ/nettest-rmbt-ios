@@ -24,4 +24,57 @@ import UIKit
     @IBOutlet weak var pingIcon: UIImageView!
     @IBOutlet weak var leftPaddingConstraint: NSLayoutConstraint?
     @IBOutlet weak var bottomBorder: UIView!
+    @IBOutlet weak var downloadSpeedView: UIView!
+    @IBOutlet weak var uploadSpeedView: UIView!
+    @IBOutlet weak var pingView: UIView!
+    @IBOutlet weak var coverageLabel: UILabel!
+    
+    func configureAsSpeedTest(with result: RMBTHistoryResult) {
+        let networTypeIcon = RMBTNetworkTypeConstants.networkTypeDictionary[result.networkTypeServerDescription]?.icon
+        typeImageView.image = networTypeIcon
+        dateLabel.text = result.timeStringIn24hFormat
+        downloadSpeedLabel.text = result.downloadSpeedMbpsString
+        downloadSpeedIcon.image = .downloadIconByResultClass(result.downloadSpeedClass)
+        uploadSpeedLabel.text = result.uploadSpeedMbpsString
+        uploadSpeedIcon.image = .uploadIconByResultClass(result.downloadSpeedClass)
+        pingLabel.text = result.shortestPingMillisString
+        pingIcon.image = .pingIconByResultClass(result.pingClass)
+        
+        downloadSpeedView.isHidden = false
+        uploadSpeedView.isHidden = false
+        pingView.isHidden = false
+        
+        // Hide coverage label for speed tests
+        coverageLabel.isHidden = true
+    }
+    
+    func configureAsCoverageTest(with item: HistoryItem) {
+        if let coverageIcon = UIImage(named: "tab_coverage") {
+            typeImageView.image = coverageIcon
+            // Apply dark grey color to match other icons like 4G icon
+            typeImageView.tintColor = UIColor.darkGray
+        }
+
+        // Use the exact same date format as speed tests
+        if let timestamp = item.time {
+            let date = Date(timeIntervalSince1970: Double(timestamp) / 1000.0)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "dd.MM.yy, HH:mm:ss"
+            dateLabel.text = formatter.string(from: date)
+        } else {
+            dateLabel.text = item.timeString
+        }
+
+        // Hide speed test columns, show coverage label with points
+        downloadSpeedView.isHidden = true
+        uploadSpeedView.isHidden = true
+        pingView.isHidden = true
+
+        if let count = item.fencesCount {
+            coverageLabel.text = RMBTHistoryIndexViewController.formatPointsCount(count)
+        } else {
+            coverageLabel.text = NSLocalizedString("coverage_label", comment: "")
+        }
+        coverageLabel.isHidden = false
+    }
 }

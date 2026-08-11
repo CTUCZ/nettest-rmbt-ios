@@ -54,7 +54,7 @@ final class RMBTNetworkTypeConstants {
         }
     }
     
-    static var networkTypeDictionary: [String: NetworkType] = [
+    static let networkTypeDictionary: [String: NetworkType] = [
         "2G": .type2G,
         "2G (GSM)": .type2G,
         "2G (EDGE)": .type2G,
@@ -91,7 +91,7 @@ final class RMBTNetworkTypeConstants {
         "UNKNOWN": .unknown,
     ]
     
-    static var cellularCodeDescriptionDictionary: [String: NetworkType] = [
+    static let cellularCodeDescriptionDictionary: [String: NetworkType] = [
         "2G/GPRS": .type2G,
         "2G/GSM": .type2G,
         "2G/EDGE": .type2G,
@@ -105,8 +105,7 @@ final class RMBTNetworkTypeConstants {
         "3G/HSDPA": .type3G,
         "3G/HSUPA": .type3G,
         "4G/LTE": .type4G,
-        "5G/NRNSA": .type5G,
-        "5G/NSA": .type5G,
+        "5G/NRNSA": .type5GNSA,
         "5G/NR": .type5G,
     ]
 }

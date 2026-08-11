@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.CocoaTouch.XIB" version="3.0" toolsVersion="19455" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" colorMatched="YES">
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.XIB" version="3.0" toolsVersion="23727" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" colorMatched="YES">
     <device id="retina4_7" orientation="portrait" appearance="light"/>
     <dependencies>
-        <deployment identifier="iOS"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="19454"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23721"/>
         <capability name="System colors in document resources" minToolsVersion="11.0"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
@@ -61,7 +60,7 @@
                             <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="4YU-wz-bnk" userLabel="Column 3">
                                 <rect key="frame" x="126" y="0.0" width="58" height="44"/>
                                 <subviews>
-                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="download_icon_colored" translatesAutoresizingMaskIntoConstraints="NO" id="RJd-BQ-uhu">
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="down-0" translatesAutoresizingMaskIntoConstraints="NO" id="RJd-BQ-uhu">
                                         <rect key="frame" x="0.0" y="14" width="16" height="16"/>
                                         <constraints>
                                             <constraint firstAttribute="width" constant="16" id="5T3-PN-8BF"/>
@@ -94,7 +93,7 @@
                                         <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                         <nil key="highlightedColor"/>
                                     </label>
-                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="upload_icon_colored" translatesAutoresizingMaskIntoConstraints="NO" id="alv-zC-L1V">
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="up-0" translatesAutoresizingMaskIntoConstraints="NO" id="alv-zC-L1V">
                                         <rect key="frame" x="0.0" y="14" width="16" height="16"/>
                                         <constraints>
                                             <constraint firstAttribute="width" constant="16" id="9EI-dN-jhn"/>
@@ -121,7 +120,7 @@
                                         <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                         <nil key="highlightedColor"/>
                                     </label>
-                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="ping_icon" translatesAutoresizingMaskIntoConstraints="NO" id="h6v-bI-u6p">
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="ping-0" translatesAutoresizingMaskIntoConstraints="NO" id="h6v-bI-u6p">
                                         <rect key="frame" x="0.0" y="14" width="16" height="16"/>
                                         <constraints>
                                             <constraint firstAttribute="height" constant="16" id="VEb-jn-Bnc"/>
@@ -148,6 +147,12 @@
                             </view>
                         </subviews>
                     </stackView>
+                    <label hidden="YES" opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="left" text="1352 Points" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="cov-Lb-Pt1" userLabel="Coverage Label">
+                        <rect key="frame" x="205" y="14" width="75" height="16.5"/>
+                        <fontDescription key="fontDescription" name="Roboto-Regular" family="Roboto" pointSize="14"/>
+                        <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <nil key="highlightedColor"/>
+                    </label>
                     <view hidden="YES" contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="quv-Dm-Jxc">
                         <rect key="frame" x="0.0" y="43" width="320" height="1"/>
                         <color key="backgroundColor" red="0.92596392864947552" green="0.92149067295551679" blue="0.93043718434343436" alpha="1" colorSpace="custom" customColorSpace="displayP3"/>
@@ -166,6 +171,8 @@
                 </subviews>
                 <constraints>
                     <constraint firstAttribute="trailing" secondItem="DWz-Ew-ZFt" secondAttribute="trailing" id="4Ke-MD-Tex"/>
+                    <constraint firstItem="cov-Lb-Pt1" firstAttribute="centerY" secondItem="2TF-bf-Go1" secondAttribute="centerY" id="Cov-Y-Con"/>
+                    <constraint firstItem="cov-Lb-Pt1" firstAttribute="trailing" secondItem="DWz-Ew-ZFt" secondAttribute="trailing" constant="-40" id="Ejf-Bk-DYu"/>
                     <constraint firstAttribute="bottom" secondItem="quv-Dm-Jxc" secondAttribute="bottom" id="HBZ-DM-35f"/>
                     <constraint firstAttribute="trailing" secondItem="Ty6-8x-BPI" secondAttribute="trailing" id="MA5-9o-Zey"/>
                     <constraint firstItem="Ty6-8x-BPI" firstAttribute="top" secondItem="2TF-bf-Go1" secondAttribute="top" id="NQi-1G-tyF"/>
@@ -179,23 +186,27 @@
             </tableViewCellContentView>
             <connections>
                 <outlet property="bottomBorder" destination="quv-Dm-Jxc" id="box-PT-uC0"/>
+                <outlet property="coverageLabel" destination="cov-Lb-Pt1" id="Cov-Lb-Out"/>
                 <outlet property="dateLabel" destination="rg5-kl-dG4" id="bIj-JE-seT"/>
                 <outlet property="downloadSpeedIcon" destination="RJd-BQ-uhu" id="qNR-5z-ZrV"/>
                 <outlet property="downloadSpeedLabel" destination="quA-3S-NeC" id="XnS-NF-Nuq"/>
+                <outlet property="downloadSpeedView" destination="4YU-wz-bnk" id="dSp-2L-MNH"/>
                 <outlet property="leftPaddingConstraint" destination="AWK-MX-lI5" id="0Az-KZ-vnK"/>
                 <outlet property="pingIcon" destination="h6v-bI-u6p" id="cVO-2L-2HO"/>
                 <outlet property="pingLabel" destination="i0c-xx-B2W" id="x0t-D7-Bgn"/>
+                <outlet property="pingView" destination="JqR-ss-aSX" id="pLm-4V-8nH"/>
                 <outlet property="typeImageView" destination="wUV-aK-ziW" id="umi-ew-x5p"/>
                 <outlet property="uploadSpeedIcon" destination="alv-zC-L1V" id="Qtf-qh-E4C"/>
                 <outlet property="uploadSpeedLabel" destination="O8d-VY-jSy" id="T3l-h1-DhE"/>
+                <outlet property="uploadSpeedView" destination="Mdg-61-lpk" id="nEw-8G-fSr"/>
             </connections>
             <point key="canvasLocation" x="394" y="456"/>
         </tableViewCell>
     </objects>
     <resources>
-        <image name="download_icon_colored" width="16" height="16"/>
-        <image name="ping_icon" width="16" height="16"/>
-        <image name="upload_icon_colored" width="16" height="16"/>
+        <image name="down-0" width="33" height="33"/>
+        <image name="ping-0" width="33" height="33"/>
+        <image name="up-0" width="33" height="33"/>
         <systemColor name="systemBackgroundColor">
             <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
         </systemColor>

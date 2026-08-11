@@ -29,7 +29,7 @@
 "Measurement" = "Měření";
 
 /* History result section title */
-"Weitere Details" = "Více iunformací";
+"Weitere Details" = "Více informací";
 
 /* History result section title */
 "Network" = "Síť";
@@ -189,20 +189,20 @@
 "Tests" = "Testy";
 
 /* Map overlay summary */
-"Map shows tests as community shapes" = "Map shows tests as community shapes";
+"Map shows tests as community shapes" = "Mapa zobrazuje testy podle obcí";
 
 /* Map overlay summary */
-"Map shows tests as heatmap" = "Map shows tests as heatmap";
+"Map shows tests as heatmap" = "Mapa zobrazuje testy jako heatmapu";
 
 /* Map overlay summary */
-"Map shows tests as points" = "Map shows tests as points";
+"Map shows tests as points" = "Mapa zobrazuje testy jako body";
 
 /* Map overlay summary */
-"Map switches automatically between heatmap and points" = "Map switches automatically between heatmap and points";
+"Map switches automatically between heatmap and points" = "Mapa automaticky přepíná mezi heatmapou a body";
 
 /* Section title in the map options view
    Title of the map options subview */
-"Map type" = "Map type";
+"Map type" = "Typ mapy";
 
 /* Loop mode alert message */
 "You are about to start tests in loop mode. The distance is set to %@ meters. The waiting time between tests is %@ minutes." = "Chystáte se spustit opakované měření. Vzdálenost je nastavena na %@ metrů. Časová prodleva je nastavena na %@ minut.";
@@ -269,10 +269,10 @@
 "streaming_audio_streaming" = "Streamování zvuku";
 "web" = "Web";
 "messaging" = "Messaging";
-"gaming_download" = "Gaming download";
-"gaming" = "Gaming";
-"gaming_cloud" = "Gaming cloud";
-"gaming_streaming" = "Gaming streaming";
+"gaming_download" = "Stahování her";
+"gaming" = "Hry";
+"gaming_cloud" = "Cloudové hraní";
+"gaming_streaming" = "Streamování her";
 "qos" = "QoS testy";
 
 "text_button_decline" = "Odmítnout";
@@ -289,6 +289,8 @@
 "private_ip_address" = "Privátní adresa";
 
 "title_loop_mode" = "Opakované měření";
+"title_coverage_series" = "Série pokrytí";
+"coverage_label" = "Měření signálu";
 
 /* Location Dialog */
 "location_dialog_label_title" = "Lokalita";
@@ -309,8 +311,8 @@
 "location_dialog_speed" = "%1$s km/h";
 "location_dialog_position" = "%1$s %2$s";
 "location_location_direction_n" = "S";
-"location_location_direction_e" = "J";
-"location_location_direction_s" = "V";
+"location_location_direction_e" = "V";
+"location_location_direction_s" = "J";
 "location_location_direction_w" = "Z";
 "open_location_permission_dialog_label_location_not_permitted" = "ČTÚ-NetTest nemá povolen přístup k poloze. Přejete si přístup k poloze povolit?";
 "open_location_permission_dialog_label_open_permission_setting" = "Otevřít nastavení aplikace";
@@ -403,18 +405,22 @@
 "preferences_test_cases" = "Počet provedených testů";
 "preferences_version" = "Verze";
 "preferences_about" = "O aplikaci";
-"preferences_developed_by" = "Developed by";
+"preferences_developed_by" = "Vyvinul";
 "preferences_source_code" = "Zdrojový kód";
+"preferences_export_logs" = "Exportovat logy";
+"preferences_export_logs_error" = "Nepodařilo se připravit dnešní soubor logu.";
 
-"preferences_debug_options" = "Debug Options";
+"preferences_debug_options" = "Možnosti ladění";
 "preferences_ipv6_only" = "Pouze IPv6";
 
 "preferences_developer_control_server" = "Control server";
+"preferences_override_control_enabled" = "Přepsat Control server";
 "preferences_override_control_server_host" = "Control host";
 "preferences_override_control_server_port" = "Control port";
 "preferences_override_control_server_ssl" = "Control SSL";
 
 "preferences_developer_logging" = "Logování";
+"preferences_developer_logging_enabled" = "Povolit logování";
 "preferences_developer_logging_summary" = "Logy budou odeslány do cílového umístění prostřednictvím UDP.";
 "preferences_developer_loggind_host" = "Logging host";
 "preferences_developer_loggind_port" = "Logging port";
@@ -424,18 +430,92 @@
 
 "button_accept.title" = "Potvrdit";
 
-"map.map_view" = "Map appearance";
-"map.cart_details" = "Overlay type";
+"map.map_view" = "Vzhled mapy";
+"map.cart_details" = "Typ překryvu";
 
-"map_style_hybrid" = "Hybrid";
-"map_style_satellite" = "Satellite";
-"map_style_standard" = "Standard";
+"map_style_hybrid" = "Hybridní";
+"map_style_satellite" = "Satelitní";
+"map_style_standard" = "Standardní";
 
-"map_layer_communities" = "Communities";
-"map_layer_points" = "Points";
-"map_layer_automatic" = "Automatic";
+"map_layer_communities" = "Obce";
+"map_layer_points" = "Body";
+"map_layer_automatic" = "Automaticky";
 
 "menu_button_statistics" = "Statistika";
-"text_ip_address_not_available" = "Adresa není k dispozici";
 
+"text_ip_address_not_available" = "Adresa není k dispozici";
+"start_test_button_help_message" = "Stiskněte tlačítko pro spuštění měření!";
+"RTR-NetTest" = "ČTÚ-NetTest";
+
+"Export data" = "Exportovat";
+
+"Home" = "Domů";
+"History" = "Historie";
+"Statistics" = "Statistika";
+"Map" = "Mapa";
+"Coverage" = "Měření signálu";
+
+/* ===== TODO: NEEDS TRANSLATION (English placeholder used for now) ===== */
+"coverage_intro_title" = "Signal Measurement";
+"coverage_intro_description" = "The signal measurement allows outdoor mobile network measurements along a path. It monitors connectivity, technology and signal strength. Connectivity is measured using regular network pings. The measurement requires good GPS coverage and Wifi must be turned off. It consumes much less data compared to speed measurement. The signal measurement is (only) intended for use within the EU and the EEA.";
+"coverage_intro_start_button" = "Start test";
+"preferences_sim_info" = "SIM Information";
+
+/* ===== TODO: NEEDS TRANSLATION — Coverage & SIM Info UI (English placeholder) ===== */
+"Technology" = "Technology";
+"Ping" = "Ping";
+"Loc. accuracy" = "Loc. accuracy";
+"Experts details" = "Experts details";
+"Only locations at or below this accuracy contribute to fences and ping assignment." = "Only locations at or below this accuracy contribute to fences and ping assignment.";
+"Date:" = "Date:";
+"Technology:" = "Technology:";
+"Ping:" = "Ping:";
+"SIM Information" = "SIM Information";
+"Refresh" = "Refresh";
+"Generation" = "Generation";
+"Used for data" = "Used for data";
+"Registered" = "Registered";
+"DATA" = "DATA";
+"No cellular service detected. The device may have no SIM, be Wi-Fi only, or be in airplane mode." = "No cellular service detected. The device may have no SIM, be Wi-Fi only, or be in airplane mode.";
+"Yes" = "Yes";
+"No" = "No";
+
+
+/* ===== TODO: NEEDS TRANSLATION — Coverage popups & results (English placeholder) ===== */
+"Stop Coverage Test" = "Stop Coverage Test";
+"The test will be stopped and results will be sent to the server." = "The test will be stopped and results will be sent to the server.";
+"Stop test" = "Stop test";
+"Continue test" = "Continue test";
+"Waiting for GPS" = "Waiting for GPS";
+"No sufficiently accurate location was obtained within %d minutes." = "No sufficiently accurate location was obtained within %d minutes.";
+"Coverage Test Results" = "Coverage Test Results";
+
+
+/* ===== TODO: NEEDS TRANSLATION — Coverage warnings, header & SIM raw fields (English placeholder) ===== */
+"Currently the location accuracy is insufficient. Please measure outdoors." = "Currently the location accuracy is insufficient. Please measure outdoors.";
+"Disable Wi‑Fi" = "Disable Wi‑Fi";
+"Please turn off Wi‑Fi to measure cellular coverage." = "Please turn off Wi‑Fi to measure cellular coverage.";
+"Network Coverage" = "Network Coverage";
+"No service" = "No service";
+"Unknown" = "Unknown";
+
+
+/* ===== TODO: NEEDS TRANSLATION — History empty state (English placeholder) ===== */
+"history_empty_label" = "No tests have been performed from this device yet";
+
+
+/* ===== TODO: NEEDS TRANSLATION — Connectivity / airplane-mode hint (SIM Info) (English placeholder) ===== */
+"Connectivity" = "Connectivity";
+"Status" = "Status";
+"Checking…" = "Checking…";
+"Network path available" = "Network path available";
+"No connection (radio is on)" = "No connection (radio is on)";
+"Likely airplane mode or offline" = "Likely airplane mode or offline";
+"This information is a best-effort guess from iOS APIs and may be incomplete or inconsistent." = "This information is a best-effort guess from iOS APIs and may be incomplete or inconsistent.";
+
+/* ===== TODO: NEEDS TRANSLATION — Coverage unavailable feedback (English placeholder) ===== */
+"coverage_unavailable_title" = "Signal measurement unavailable";
+"coverage_unavailable_message" = "Signal measurement requires Wi‑Fi to be turned off and good GPS reception. Please adjust and try again.";
+
+/* ===== Fork (ČTÚ) specific ===== */
 "title_normal_mode" = "Běžné měření";

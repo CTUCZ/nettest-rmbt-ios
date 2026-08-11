@@ -30,6 +30,7 @@ class RMBTTestPortraitView: UIView, XibLoadable {
     @IBOutlet weak var technologyTitleLabel: UILabel!
     @IBOutlet weak var technologyValueLabel: UILabel!
     @IBOutlet weak var networkTypeLabel: UILabel?
+    @IBOutlet weak var networkNameTitleLabel: UILabel!
     @IBOutlet weak var networkNameLabel: UILabel!
     @IBOutlet weak var networkTypeImageView: UIImageView!
     
@@ -70,6 +71,7 @@ class RMBTTestPortraitView: UIView, XibLoadable {
     
     // QoS
     @IBOutlet weak var qosProgressView: UIView!
+    @IBOutlet weak var qosProgressLabelContainer: UIStackView!
 
     // Loop Mode Waiting
     @IBOutlet weak var loopModeWaitingView: UIView!
@@ -96,6 +98,7 @@ class RMBTTestPortraitView: UIView, XibLoadable {
     var networkName: String? {
         didSet {
             self.networkNameLabel.text = networkName
+            self.networkNameTitleLabel.isHidden = (networkName?.isEmpty ?? true)
         }
     }
     
@@ -171,10 +174,10 @@ class RMBTTestPortraitView: UIView, XibLoadable {
             self.speedGaugeView.value = speedGauge
         }
     }
-    
-    var pingColor: UIColor = UIColor.white {
+
+    var pingIcon: UIImage? {
         didSet {
-            self.pingIconImageView.tintColor = pingColor
+            self.pingIconImageView.image = pingIcon
         }
     }
     
@@ -184,9 +187,9 @@ class RMBTTestPortraitView: UIView, XibLoadable {
         }
     }
     
-    var downColor: UIColor = UIColor.white {
+    var downIcon: UIImage? {
         didSet {
-            self.downIconImageView.tintColor = downColor
+            self.downIconImageView.image = downIcon
         }
     }
     
@@ -195,10 +198,10 @@ class RMBTTestPortraitView: UIView, XibLoadable {
             self.downResultLabel.text = down
         }
     }
-    
-    var upColor: UIColor = UIColor.white {
+
+    var upIcon: UIImage? {
         didSet {
-            self.upIconImageView.tintColor = upColor
+            self.upIconImageView.image = upIcon
         }
     }
     
@@ -267,17 +270,18 @@ class RMBTTestPortraitView: UIView, XibLoadable {
         self.counterAnimationView.isAnimating = true
     }
     
-    @objc func showQoSUI(_ state: Bool) {
-        self.speedGraphView.isHidden = state
-        self.pingGraphView.isHidden = state
+    @objc func showQoSUI(_ shouldShowQoS: Bool) {
+        self.speedGraphView.isHidden = shouldShowQoS
+        self.pingGraphView.isHidden = shouldShowQoS
     //    _speedGaugeView.hidden = state
-        self.speedLabel.isHidden = state
-        self.speedSuffixLabel.isHidden = state
+        self.speedLabel.isHidden = shouldShowQoS
+        self.qosProgressLabelContainer.isHidden = !shouldShowQoS
+        self.speedSuffixLabel.isHidden = shouldShowQoS
         self.speedGaugeView.value = 0.0
-        self.speedSuffixLabel.isHidden = state
-        self.arrowImageView.isHidden = state
-        self.qosProgressView.isHidden = !state
-        if state == false {
+        self.speedSuffixLabel.isHidden = shouldShowQoS
+        self.arrowImageView.isHidden = shouldShowQoS
+        self.qosProgressView.isHidden = !shouldShowQoS
+        if shouldShowQoS == false {
             self.updatePhase()
         }
     }
@@ -290,6 +294,7 @@ class RMBTTestPortraitView: UIView, XibLoadable {
         self.speedGaugeView.value = 0.0
         self.progressGaugeView.value = 0.0
         self.speedLabel.text = "--"
+        self.qosProgressLabelContainer.isHidden = true
         self.progressLabel.text = "--"
         self.speedSuffixLabel.isHidden = true
     }
@@ -323,14 +328,15 @@ class RMBTTestPortraitView: UIView, XibLoadable {
         self.ping = "-"
         self.down = "-"
         self.up = "-"
-        self.upColor = UIColor.white
-        self.downColor = UIColor.white
-        self.pingColor = UIColor.white
+        self.upIcon = .uploadIconByResultClass(nil)
+        self.downIcon = .downloadIconByResultClass(nil)
+        self.pingIcon = .pingIconByResultClass(nil)
 
         self.arrowImageView.image = nil
 
         speedGaugeView.value = 0.0
         self.speedLabel.text = ""
+        self.qosProgressLabelContainer.isHidden = true
         self.speedSuffixLabel.isHidden = true
         self.speedGraphView.clear()
         self.pingGraphView.clear()
@@ -391,13 +397,14 @@ class RMBTTestPortraitView: UIView, XibLoadable {
             self.speedGraphView.isHidden = false
             self.speedGraphView.clear()
             self.speedLabel.text = ""
+            self.qosProgressLabelContainer.isHidden = true
             self.speedSuffixLabel.isHidden = true
             self.arrowImageView.image = UIImage(named: "upload_icon")
         } else {
             self.speedGraphView.isHidden = true
         }
         
-        self.pingGraphView.isHidden = phase != .latency
+        self.pingGraphView.isHidden = true
         self.updateDetailInfoView()
     }
     
@@ -409,7 +416,8 @@ class RMBTTestPortraitView: UIView, XibLoadable {
         
         self.progressGaugePlaceholderView.isHidden = true
         self.speedGaugePlaceholderView.isHidden = true
-        
+        self.qosProgressLabelContainer.isHidden = true
+
         self.updateDetailInfoView()
         
         self.infoTitleView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(infoViewTap)))
@@ -420,6 +428,8 @@ class RMBTTestPortraitView: UIView, XibLoadable {
         self.infoView.layer.shadowRadius = 3
         
         self.networkMobileImageView.image = self.networkMobileImageView.image?.withRenderingMode(.alwaysTemplate)
+
+        pingGraphView.showBarChart = true
     }
     
     func updateGaugesPosition() {

@@ -85,28 +85,53 @@ final class RMBTMapOptions {
     public var oldTypes: [RMBTMapOptionsType] = []
     
     public var mapFilters: [RMBTMapOptionsFilter] = []
-    
+
+    /// Whether the currently selected map type is mobile, derived from the
+    /// MAP_TYPE filter's active value params rather than display title matching.
+    public var activeMapTypeIsMobile: Bool {
+        let value = mapFilters.first(where: { $0.iconValue == "MAP_TYPE" })?
+            .activeValue?.params["map_type_is_mobile"]
+        return (value as? NSNumber)?.boolValue ?? false
+    }
+
+    /// Single source of truth for whether a filter is relevant to the current
+    /// map type. Used by both the UI layer and request-param generation.
+    public func isFilterActiveForCurrentContext(_ filter: RMBTMapOptionsFilter) -> Bool {
+        switch filter.iconValue {
+        case "MAP_FILTER_TECHNOLOGY":
+            return activeMapTypeIsMobile
+        case "MAP_FILTER_CARRIER":
+            return filter.dependsOnMapTypeIsMobile == activeMapTypeIsMobile
+        default:
+            return true
+        }
+    }
+
     public var mapFiltersDictionary: [String: Any] {
         var infos: [[String: Any]] = []
         var result: [String: Any] = [:]
-        
-        //get params from all active values and active sub options
-        for mapFilter in mapFilters {
+
+        //get params from active values, skipping filters irrelevant to the current map type
+        for mapFilter in mapFilters where isFilterActiveForCurrentContext(mapFilter) {
+            Log.logger.debug("Processing filter '\(mapFilter.title)' (icon=\(mapFilter.iconValue), dependsMobile=\(mapFilter.dependsOnMapTypeIsMobile)) activeValue='\(mapFilter.activeValue?.title ?? "nil")'")
             if let option = mapFilter.activeValue?.activeOption {
+                Log.logger.debug("  -> activeOption params: \(option.params)")
                 infos.append(option.params)
             }
             if let value = mapFilter.activeValue {
+                Log.logger.debug("  -> activeValue params: \(value.params)")
                 infos.append(value.params)
             }
         }
-        
+
         //merge all params to dictionary
         for info in infos {
             info.forEach { item in
                 result[item.key] = item.value
             }
         }
-        
+
+        Log.logger.debug("MERGED result: \(result)")
         return result
     }
     
@@ -150,19 +175,30 @@ final class RMBTMapOptions {
         let selection = RMBTMapOptionsSelection()
 
         selection.overlayIdentifier = oldActiveOverlay?.identifier
-        
+
         var activeFilters: [String: Any] = [:]
         for f in mapFilters {
-            activeFilters[f.title] = f.activeValue?.title
+            let key = persistenceKey(for: f)
+            Log.logger.debug("filter '\(f.title)' key='\(key)' -> saving activeValue='\(f.activeValue?.title ?? "nil")'")
+            activeFilters[key] = f.activeValue?.title
         }
+        Log.logger.debug("Final saved activeFilters dictionary: \(activeFilters)")
         selection.activeFilters = activeFilters
 
         RMBTSettings.shared.mapOptionsSelection = selection
     }
 
     ///
+    /// Stable persistence key derived from non-localized metadata.
+    /// Avoids collisions when multiple filters share the same display title
+    /// (e.g. two "Operator" carrier filters for mobile vs non-mobile).
+    private func persistenceKey(for filter: RMBTMapOptionsFilter) -> String {
+        "\(filter.iconValue)|mobile:\(filter.dependsOnMapTypeIsMobile)"
+    }
+
     fileprivate func restoreSelection() {
         let selection: RMBTMapOptionsSelection = RMBTSettings.shared.mapOptionsSelection
+        Log.logger.debug("Saved activeFilters: \(selection.activeFilters ?? [:])")
 
         if let id = selection.overlayIdentifier {
             for o in oldOverlays {
@@ -175,12 +211,21 @@ final class RMBTMapOptions {
 
         if let activeFilters = selection.activeFilters {
             for f in mapFilters {
-                if let activeFilterValueTitle = activeFilters[f.title] as? String {
+                let beforeTitle = f.activeValue?.title ?? "nil"
+                let key = persistenceKey(for: f)
+                // Try stable key first, fall back to legacy title key for backward compatibility
+                let savedTitle = (activeFilters[key] as? String) ?? (activeFilters[f.title] as? String)
+                if let activeFilterValueTitle = savedTitle {
                     if let v = f.possibleValues.first(where: { fv in
                         return fv.title == activeFilterValueTitle
                     }) {
                         f.activeValue = v
+                        Log.logger.debug("filter '\(f.title)' key='\(key)': restored '\(beforeTitle)' -> '\(v.title)' params=\(v.params)")
+                    } else {
+                        Log.logger.debug("filter '\(f.title)' key='\(key)': saved value '\(activeFilterValueTitle)' NOT FOUND in options [\(f.possibleValues.map { $0.title }.joined(separator: ", "))], keeping '\(beforeTitle)'")
                     }
+                } else {
+                    Log.logger.debug("filter '\(f.title)' key='\(key)': no saved value, keeping '\(beforeTitle)'")
                 }
             }
         }

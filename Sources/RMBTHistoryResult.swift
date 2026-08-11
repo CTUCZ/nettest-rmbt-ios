@@ -28,6 +28,40 @@ class RMBTHistoryLoopResult: RMBTHistoryResult {
         }
         self.loopResults = loopResults
     }
+
+    var openTestUUIDs: [String] {
+        loopResults.compactMap(\.openTestUuid)
+    }
+
+    var isCoverageSeries: Bool {
+        loopResults.first is RMBTHistoryCoverageResult
+    }
+
+    /// Returns the sum of all per-segment fence counts, or nil when no counts are available.
+    var totalFencesCount: Int? {
+        let counts = loopResults.compactMap { ($0 as? RMBTHistoryCoverageResult)?.historyItem.fencesCount }
+        guard !counts.isEmpty else { return nil }
+        return counts.reduce(0, +)
+    }
+}
+
+class RMBTHistoryCoverageResult: RMBTHistoryResult {
+    let historyItem: HistoryItem
+    
+    init(historyItem: HistoryItem) {
+        self.historyItem = historyItem
+        
+        // Convert HistoryItem to dictionary for super.init
+        var responseDict: [String: Any] = [:]
+        responseDict["test_uuid"] = historyItem.testUuid ?? "coverage-test"
+        responseDict["open_test_uuid"] = historyItem.openTestUuid
+        responseDict["loop_uuid"] = historyItem.loopUuid
+        responseDict["time"] = historyItem.time
+        responseDict["time_string"] = historyItem.timeString
+        responseDict["network_type"] = historyItem.networkType
+        
+        super.init(response: responseDict)
+    }
 }
 
 class RMBTHistoryResult: NSObject {
@@ -54,6 +88,7 @@ class RMBTHistoryResult: NSObject {
     private(set) var deviceModel: String?
     private(set) var coordinate: CLLocationCoordinate2D = kCLLocationCoordinate2DInvalid
     fileprivate(set) var networkTypeServerDescription: String = "" // "WLAN", "2G/3G" etc.
+    fileprivate(set) var wlanSSID: String?
 
     // Available in basic details
     private(set) var networkType: RMBTNetworkType = .unknown
@@ -72,11 +107,15 @@ class RMBTHistoryResult: NSObject {
         // it's a numeric code
         networkTypeServerDescription = response["network_type"] as? String ?? ""
         uuid = response["test_uuid"] as? String ?? ""
+        openTestUuid = response["open_test_uuid"] as? String
         loopUuid = response["loop_uuid"] as? String
         deviceModel = response["model"] as? String
         timeString = response["time_string"] as? String
             
-        if let time = response["time"] as? Int {
+        if let time = response["time"] as? UInt64 {
+            let t = Double(time) / 1000.0
+            timestamp = Date(timeIntervalSince1970: t)
+        } else if let time = response["time"] as? Int {
             let t = Double(time) / 1000.0
             timestamp = Date(timeIntervalSince1970: t)
         } else {
@@ -161,25 +200,25 @@ class RMBTHistoryResult: NSObject {
                     allDone.leave()
                     return
                 }
-                if let networkTypeInt = response["network_type"] as? Int {
-                    self.networkType = RMBTNetworkType(rawValue: networkTypeInt) ?? .unknown
-                }
-                if let networkInfo = response["network_info"] as? [String: Any],
-                   let networkTypeLabel = networkInfo["network_type_label"] as? String {
-                    self.networkTypeServerDescription = networkTypeLabel
-                }
-                
-                self.timeString = response["time_string"] as? String
-                if let time = response["time"] as? Int {
+                // TODO: use `measurement` instead of `response`
+                let measurement = r.measurements?.first
+
+                self.networkType = measurement?.networkType.map { RMBTNetworkType(rawValue: $0) ?? .unknown } ?? .unknown
+                self.networkTypeServerDescription = measurement?.networkInfo?.networkTypeLabel ?? ""
+                self.wlanSSID = measurement?.networkInfo?.wifiSSID
+                self.timeString = measurement?.timeString
+
+                if let time = measurement?.time {
                     let t = Double(time) / 1000.0
                     self.timestamp = Date(timeIntervalSince1970: t)
                 } else {
                     assert(false, "can't parse time")
                 }
                 
-                self.openTestUuid = response["open_test_uuid"] as? String
+                self.openTestUuid = measurement?.openTestUuid
                 self.shareURL = nil;
-                self.shareText = response["share_text"] as? String
+                self.shareText = measurement?.shareText
+
                 if let shareText = self.shareText,
                    let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
                     
@@ -221,25 +260,23 @@ class RMBTHistoryResult: NSObject {
                    let long = response["geo_long"] as? Double {
                     self.coordinate = CLLocationCoordinate2D(latitude: lat, longitude: long)
                 } else {
-                    assert(false, "Can't parse coordinates")
+                    // Coverage tests might not have coordinates - use invalid coordinates instead of asserting
+                    self.coordinate = kCLLocationCoordinate2DInvalid
                 }
 
                 if let measurementResult = response["measurement_result"] as? [String: Any] {
                     if let download = measurementResult["download_kbit"] as? Int {
                         self.downloadSpeedMbpsString = RMBTSpeedMbpsString(Double(download), withMbps: false)
-                    } else {
-                        assert(false, "can't parse download")
-                    }
-                    if let upload = measurementResult["upload_kbit"] as? Int {
-                        self.uploadSpeedMbpsString = RMBTSpeedMbpsString(Double(upload), withMbps: false)
-                    } else {
-                        assert(false, "can't parse upload")
                     }
                     
-                    if let ping = measurementResult["ping_ms"] as? Int {
+                    if let upload = measurementResult["upload_kbit"] as? Int {
+                        self.uploadSpeedMbpsString = RMBTSpeedMbpsString(Double(upload), withMbps: false)
+                    }
+                    
+                    if let ping = measurementResult["ping_ms"] as? Double {
+                        self.shortestPingMillisString = "\(Int(ping))"
+                    } else if let ping = measurementResult["ping_ms"] as? Int {
                         self.shortestPingMillisString = "\(ping)"
-                    } else {
-                        assert(false, "can't parse upload")
                     }
                 }
 
@@ -357,7 +394,7 @@ class RMBTHistoryResult: NSObject {
 extension RMBTHistoryResult {
     var timeStringIn24hFormat: String? {
         get {
-            let df = DateFormatter(withFormat: "dd.MM.yy, HH:mm:ss", locale: Locale.current.languageCode ?? "en_US")
+            let df = DateFormatter(withFormat: "dd.MM.yy, HH:mm:ss", locale: Locale.current.language.languageCode?.identifier ?? "en_US")
             
             return df.string(from: timestamp)
         }

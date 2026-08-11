@@ -82,8 +82,8 @@ import Foundation
     ///
     @objc public dynamic var debugLoopModeMinDelay: UInt = 0
     
-    @objc public dynamic var qosEnabled: Bool = true
-    @objc public dynamic var only2Hours: Bool = true
+    @objc public dynamic var qosEnabled: Bool = false
+    @objc public dynamic var only2Hours: Bool = false
     @objc public dynamic var previousLaunchQoSDate: Date?
     
     
@@ -139,6 +139,9 @@ import Foundation
     @objc public dynamic var serverIdentifier: String?
     @objc public dynamic var isOverrideServer: Bool = false
     @objc public dynamic var activeMeasurementId: String?
+    
+    // Feature flags
+    @objc public dynamic var coverageFeatureEnabled: Bool = false
 
     ///
     private override init() {
@@ -146,7 +149,7 @@ import Foundation
 
         super.init()
 
-        UserDefaults.standard.register(defaults:
+        UserDefaults.appDefaults.register(defaults:
         [
             "loopModeEveryMeters": RMBTConfig.RMBT_TEST_LOOPMODE_DEFAULT_MOVEMENT_M,
             "loopModeEveryMinutes": RMBTConfig.RMBT_TEST_LOOPMODE_DEFAULT_DELAY_MINS,
@@ -232,7 +235,10 @@ import Foundation
             "isDevModeEnabled",
             "serverIdentifier",
             "isOverrideServer",
-            "expertMode"
+            "expertMode",
+
+            // Feature flags
+            "coverageFeatureEnabled"
         ])
     }
 

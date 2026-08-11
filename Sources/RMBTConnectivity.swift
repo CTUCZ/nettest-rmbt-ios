@@ -8,7 +8,6 @@
 
 import UIKit
 import CoreTelephony
-import SystemConfiguration.CaptiveNetwork
 
 enum RMBTNetworkType: Int {
     case unknown  = -1
@@ -54,8 +53,6 @@ class RMBTConnectivity: NSObject {
     private(set) var timestamp: Date = Date()
 
     private(set) var cellularCode: Int?
-    private(set) var telephonyNetworkSimOperator: String?
-    private(set) var telephonyNetworkSimCountry: String?
     
     private(set) var bssid: String?
     
@@ -81,7 +78,12 @@ class RMBTConnectivity: NSObject {
         super.init()
         self.getNetworkDetails()
     }
-    
+
+    func updateWiFiInfo(ssid: String?, bssid: String?) {
+        self.networkName = ssid
+        self.bssid = bssid
+    }
+
     func testResultDictionary() -> [String: Any] {
         var result: [String: Any] = [:]
         
@@ -101,24 +103,19 @@ class RMBTConnectivity: NSObject {
             }
 
             result["network_type"] = cellularCode
-            
-            result["telephony_network_sim_operator_name"] = RMBTValueOrNull(networkName)
-            result["telephony_network_sim_country"] = RMBTValueOrNull(telephonyNetworkSimCountry)
-            result["telephony_network_sim_operator"] = RMBTValueOrNull(telephonyNetworkSimOperator)
-            
         }
         return result
     }
 
     func isEqual(to connectivity: RMBTConnectivity?) -> Bool {
-        if (connectivity == self) { return true }
-        guard let connectivity = connectivity else {
-            return false
-        }
+        guard let connectivity = connectivity else { return false }
+        if connectivity === self { return true }
 
-        return ((connectivity.networkTypeDescription == self.networkTypeDescription &&
-                 connectivity.dualSim && self.dualSim) ||
-                (connectivity.networkTypeDescription == self.networkTypeDescription && connectivity.networkName == self.networkName))
+        if connectivity.networkType != networkType { return false }
+        if connectivity.networkName != networkName { return false }
+        if connectivity.cellularCode != cellularCode { return false }
+        if connectivity.bssid != bssid { return false }
+        return true
     }
 
     // Gets byte counts from the network interface used for the connectivity.
@@ -192,49 +189,25 @@ class RMBTConnectivity: NSObject {
     
     fileprivate func updateCellularInfo() {
         let netinfo = CTTelephonyNetworkInfo()
-        var carrier: CTCarrier?
         var radioAccessTechnology: String?
         
-        if #available(iOS 13.0, *) {
-            if let providers = netinfo.serviceSubscriberCellularProviders,
-               let dataIndetifier = netinfo.dataServiceIdentifier {
-                carrier = providers[dataIndetifier]
-                radioAccessTechnology = netinfo.serviceCurrentRadioAccessTechnology?[dataIndetifier]
-            }
+        if let dataIndetifier = netinfo.dataServiceIdentifier {
+            radioAccessTechnology = netinfo.serviceCurrentRadioAccessTechnology?[dataIndetifier]
+            Log.logger.debug("updateCellularInfo service=\(dataIndetifier) radio=\(radioAccessTechnology ?? "nil")")
         } else {
-            carrier = netinfo.subscriberCellularProvider
-            if netinfo.responds(to: #selector(getter: CTTelephonyNetworkInfo.currentRadioAccessTechnology)) {
-                radioAccessTechnology = netinfo.currentRadioAccessTechnology
-            }
+            Log.logger.debug("updateCellularInfo service identifier missing")
         }
-        if let carrier = carrier {
-            if carrier.carrierName == "Carrier" {
-                networkName = nil
-            } else {
-                networkName = carrier.carrierName
-            }
-            telephonyNetworkSimCountry = carrier.isoCountryCode
-            telephonyNetworkSimOperator = String(format:"%@-%@", carrier.mobileCountryCode ?? "null", carrier.mobileNetworkCode ?? "null")
-        }
-        
+
+        networkName = nil
+
         //Get access technology
-        if let radioAccessTechnology = radioAccessTechnology {
+        if let radioAccessTechnology {
             cellularCode = cellularCodeForCTValue(radioAccessTechnology)
             cellularCodeDescription = cellularCodeDescriptionForCTValue(radioAccessTechnology)
+            Log.logger.debug("updateCellularInfo resolved radio=\(radioAccessTechnology) code=\(cellularCode.map(String.init) ?? "nil") desc=\(cellularCodeDescription ?? "nil")")
+        } else {
+            Log.logger.debug("updateCellularInfo radio value unavailable")
         }
-    }
-    
-    private func getWiFiParameters() -> (ssid: String, bssid: String)? {
-        if let interfaces = CNCopySupportedInterfaces() as? [CFString] {
-            for interface in interfaces {
-                if let interfaceData = CNCopyCurrentNetworkInfo(interface) as? [CFString: Any],
-                let currentSSID = interfaceData[kCNNetworkInfoKeySSID] as? String,
-                let currentBSSID = interfaceData[kCNNetworkInfoKeyBSSID] as? String {
-                    return (ssid: currentSSID, bssid: RMBTReformatHexIdentifier(currentBSSID))
-                }
-            }
-        }
-        return nil
     }
     
     private func getNetworkDetails() {
@@ -247,19 +220,15 @@ class RMBTConnectivity: NSObject {
         switch networkType {
         case .cellular: self.updateCellularInfo()
         case .wifi:
-            // If WLAN, then show SSID as network name. Fetching SSID does not work on the simulator.
-            if let wifiParams = getWiFiParameters() {
-                networkName = wifiParams.ssid
-                bssid = wifiParams.bssid
-            }
+            // Wi-Fi SSID/BSSID is resolved by `RMBTConnectivityTracker` (async via NetworkExtension).
+            break
         case .none: break
         default:
             assert(false, "Invalid network type \(networkType)")
         }
     }
 
-    fileprivate func cellularCodeForCTValue(_ value: String?) -> Int? {
-        guard let value = value else { return nil }
+    fileprivate func cellularCodeForCTValue(_ value: String) -> Int? {
 
         return cellularCodeTable[value]
     }
@@ -279,20 +248,14 @@ class RMBTConnectivity: NSObject {
             CTRadioAccessTechnologyLTE:          13,
             CTRadioAccessTechnologyeHRPD:        14
         ]
-        
-        if #available(iOS 14.1, *) {
-            table[CTRadioAccessTechnologyNRNSA] = 41
-            table[CTRadioAccessTechnologyNR] = 20
-        }
+
+        table[CTRadioAccessTechnologyNRNSA] = 41
+        table[CTRadioAccessTechnologyNR] = 20
         return table
     }
 
-    fileprivate func cellularCodeDescriptionForCTValue(_ value: String!) -> String? {
-        if value == nil {
-            return nil
-        }
-
-        return cellularCodeDescriptionTable[value] ?? nil
+    fileprivate func cellularCodeDescriptionForCTValue(_ value: String) -> String? {
+        value.radioTechnologyCode
     }
 
     fileprivate var cellularCodeDescriptionTable: [String: String] {
@@ -309,12 +272,60 @@ class RMBTConnectivity: NSObject {
             CTRadioAccessTechnologyLTE:             "4G/LTE",
             CTRadioAccessTechnologyeHRPD:           "2G/HRPD",
         ]
-        
-        if #available(iOS 14.1, *) {
-            table[CTRadioAccessTechnologyNRNSA] = "5G/NRNSA"
-            table[CTRadioAccessTechnologyNR] = "5G/NR"
-        }
+
+        table[CTRadioAccessTechnologyNRNSA] = "5G/NRNSA"
+        table[CTRadioAccessTechnologyNR] = "5G/NR"
         
         return table
+    }
+}
+
+extension String {
+    var radioTechnologyCode: String? {
+        let table = [
+            CTRadioAccessTechnologyGPRS: "2G/GSM",
+            CTRadioAccessTechnologyEdge: "2G/EDGE",
+            CTRadioAccessTechnologyWCDMA: "3G/UMTS",
+            CTRadioAccessTechnologyCDMA1x: "2G/CDMA",
+            CTRadioAccessTechnologyCDMAEVDORev0: "2G/EVDO_0",
+            CTRadioAccessTechnologyCDMAEVDORevA: "2G/EVDO_A",
+            CTRadioAccessTechnologyHSDPA: "3G/HSDPA",
+            CTRadioAccessTechnologyHSUPA: "3G/HSUPA",
+            CTRadioAccessTechnologyCDMAEVDORevB: "2G/EVDO_B",
+            CTRadioAccessTechnologyLTE: "4G/LTE",
+            CTRadioAccessTechnologyeHRPD: "2G/HRPD",
+            CTRadioAccessTechnologyNRNSA: "5G/NRNSA",
+            CTRadioAccessTechnologyNR: "5G/NR"
+        ]
+        return table[self]
+    }
+
+    var radioTechnologyTypeID: Int? {
+        return technologyIDTable[self]
+    }
+}
+
+private let technologyIDTable = [
+    CTRadioAccessTechnologyGPRS:         1,
+    CTRadioAccessTechnologyEdge:         2,
+    CTRadioAccessTechnologyWCDMA:        3,
+    CTRadioAccessTechnologyCDMA1x:       4,
+    CTRadioAccessTechnologyCDMAEVDORev0: 5,
+    CTRadioAccessTechnologyCDMAEVDORevA: 6,
+    CTRadioAccessTechnologyHSDPA:        8,
+    CTRadioAccessTechnologyHSUPA:        9,
+    CTRadioAccessTechnologyCDMAEVDORevB: 12,
+    CTRadioAccessTechnologyLTE:          13,
+    CTRadioAccessTechnologyeHRPD:        14,
+    CTRadioAccessTechnologyNRNSA:        41,
+    CTRadioAccessTechnologyNR:           20
+]
+
+extension Int {
+    var radioAccessTechnology: String? {
+        technologyIDTable
+            .filter { $0.value == self }
+            .keys
+            .first
     }
 }

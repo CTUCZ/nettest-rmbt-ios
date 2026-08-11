@@ -23,6 +23,7 @@ protocol RMBTBaseTestViewControllerSubclass: AnyObject {
 
     func onTestMeasuredLatency(_ nanos: UInt64)
     func onTestMeasuredPings(_ pings: [Ping], in phase: RMBTTestRunnerPhase)
+    func onTestCompletedLantencPhase()
     func onTestMeasuredTroughputs(_ throughputs: [RMBTThroughput], in phase: RMBTTestRunnerPhase)
 
     func onTestMeasuredDownloadSpeed(_ kbps: UInt32)
@@ -183,6 +184,12 @@ class RMBTBaseTestViewController: UIViewController {
         }
         testRunner = RMBTTestRunner(delegate: self)
         testRunner?.start(with: extraParams)
+
+        // when starting new test, try to resend failed-to-be-sent coverage test results, if any
+        // Use isLaunched: false because starting a speed test is NOT an app launch
+        Task {
+            try? await NetworkCoverageFactory().persistedFencesSender.resendPersistentAreas(isLaunched: false)
+        }
     }
     
     func cancelTest() {
@@ -259,7 +266,12 @@ extension RMBTBaseTestViewController: RMBTTestRunnerDelegate {
         guard let subself = self as? RMBTBaseTestViewControllerSubclass else { return }
         subself.onTestMeasuredPings(pings, in: phase)
     }
-    
+
+    func testRunnerDidCompleteLatencyPhase() {
+        guard let subself = self as? RMBTBaseTestViewControllerSubclass else { return }
+        subself.onTestCompletedLantencPhase()
+    }
+
     func testRunnerDidMeasureThroughputs(_ throughputs: [RMBTThroughput], in phase: RMBTTestRunnerPhase) {
         guard let subself = self as? RMBTBaseTestViewControllerSubclass else { return }
         subself.onTestMeasuredTroughputs(throughputs, in: phase)

@@ -12,7 +12,20 @@ xcuserdata
 .idea
 *.xcworkspace
 
-Configs/
+/Configs/
 Pods/
-Resources/RMBT-Info.plist
 Resources/Images.xcassets/AppIcon.appiconset/
+tmp/
+
+# Claude Code
+.claude/
+
+# Ruby/Bundler artifacts
+# Track only .bundle/config (enforces vendor/bundle path across devs)
+.bundle/*
+!.bundle/config
+vendor/bundle/
+
+# Local build logs
+build.log
+build2.log

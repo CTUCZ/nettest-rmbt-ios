@@ -16,6 +16,8 @@ import ObjectMapper
     ///
     public var testUuid: String?
 
+    public var openTestUuid: String?
+
     ///
     public var time: UInt64?
 
@@ -64,6 +66,10 @@ import ObjectMapper
     public var qosResult: String?
     
     public var loopUuid: String?
+    
+    public var isCoverageFences: Bool?
+    
+    public var fencesCount: Int?
 
     @objc func json() -> [String: Any] {
         return self.toJSON()
@@ -76,6 +82,7 @@ import ObjectMapper
         //
 
         testUuid           <- map["test_uuid"]
+        openTestUuid       <- map["open_test_uuid"]
         time               <- (map["time"], UInt64NSNumberTransformOf)
         timeZone           <- map["time_zone"]
         timeString         <- map["time_string"]
@@ -94,5 +101,7 @@ import ObjectMapper
         operatorName         <- map["operator"]
         qosResult           <- map["qos_result"]
         loopUuid            <- map["loop_uuid"]
+        isCoverageFences    <- map["isCoverageFences"]
+        fencesCount         <- map["fencesCount"]
     }
 }

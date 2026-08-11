@@ -10,7 +10,7 @@ import Foundation
 import Alamofire
 
 public typealias IpResponseSuccessCallback = (_ ipResponse: IpResponse) -> Void
-public typealias ErrorCallback = (_ error: Error?) -> Void
+public typealias ErrorCallback = (_ error: Error) -> Void
 public typealias EmptyCallback = () -> Void
 
 public typealias HistoryFilterType = [String: [String]]
@@ -25,7 +25,8 @@ public typealias HistoryFilterType = [String: [String]]
     
     public var statsURL: URL? = URL(string: RMBTHelpers.RMBTLocalize(urlString: RMBTConfig.RMBT_STATS_URL))
     public var mapServerURL: URL?
-    
+    public var statisticServerURL: URL?
+
     public lazy var termsAndConditions: SettingsResponse.Settings.TermsAndConditions = {
         let settings = SettingsResponse.Settings.TermsAndConditions()
         settings.url = RMBTHelpers.RMBTLocalize(urlString: RMBTConfig.RMBT_PRIVACY_TOS_URL)
@@ -46,6 +47,10 @@ public typealias HistoryFilterType = [String: [String]]
     
     private var settings: SettingsResponse.Settings?
     
+    private let settingsRequestQueue = DispatchQueue(label: "com.netztest.nettest.settings_request_queue")
+    private var pendingSettingsCallbacks: [(success: EmptyCallback, failure: ErrorCallback)] = []
+    private var settingsRequestInFlight = false
+    
     @objc public var qosTestNames: [AnyHashable: String] {
         return QosMeasurementType.localizedNameDict //settings?.qosMeasurementTypes?.map { $0.testDesc ?? "Unknown" } ?? []
     }
@@ -56,37 +61,43 @@ public typealias HistoryFilterType = [String: [String]]
     private var lastNewsUid: Int = UserDefaults.lastNewsUidPreference()
 }
 
+extension RMBTControlServer: ControlServerProviding {}
+
 extension RMBTControlServer {
     // MARK: Settings
 
         ///
         @objc func getSettings(_ success: @escaping EmptyCallback, error failure: @escaping ErrorCallback) {
-            
+            settingsRequestQueue.async {
+                self.pendingSettingsCallbacks.append((success: success, failure: failure))
+                guard !self.settingsRequestInFlight else { return }
+                self.settingsRequestInFlight = true
+                self.performSettingsRequest()
+            }
+        }
+
+        private func performSettingsRequest() {
             let settingsRequest = SettingsRequest()
             settingsRequest.termsAndConditionsAccepted = true
             settingsRequest.termsAndConditionsAccepted_Version = RMBTTOS.shared.lastAcceptedVersion
             settingsRequest.uuid = uuid
 
-            let success: (_ response: SettingsResponse) -> () = { response in
-                Log.logger.debug("settings: \(response)")
-                
+            let handleSuccess: (_ response: SettingsResponse) -> Void = { response in
+                Log.logger.info("Control server settings fetched.")
+
                 if let set = response.settings?.first {
                     self.settings = set
-                    
-                    // set uuid
+
                     if let newUUID = set.uuid {
                         self.uuid = newUUID
                     }
-                    
-                    // save uuid
+
                     if let uuidKey = self.uuidKey, let u = self.uuid {
-                        UserDefaults.storeNewUUID(uuidKey: uuidKey, uuid: u)
+                        KeychainHelper.storeNewUUID(uuidKey: uuidKey, uuid: u)
                     }
-                    
-                    // get history filters
+
                     self.historyFilters = set.history
-                    
-                    // set qos test type desc
+
                     set.qosMeasurementTypes?.forEach({ measurementType in
                         if let theType = measurementType.testType, let theDesc = measurementType.testDesc {
                             if let type = QosMeasurementType(rawValue: theType.lowercased()) {
@@ -94,12 +105,17 @@ extension RMBTControlServer {
                             }
                         }
                     })
-                    
+
                     if let statistics = set.urls?.statistics,
                        let url = URL(string: statistics) {
                         self.statsURL = url
                     }
-                    
+
+                    if let statisticServer = set.urls?.statisticsServer,
+                       let url = URL(string: statisticServer) {
+                        self.statisticServerURL = url
+                    }
+
                     if let mapServer = set.urls?.mapServer,
                        let url = URL(string: mapServer) {
                         self.mapServerURL = url
@@ -109,12 +125,12 @@ extension RMBTControlServer {
                        let url = URL(string: "https://\(ipv4Server)\(RMBTConfig.shared.RMBT_CONTROL_SERVER_PATH)") {
                         self.ipv4 = url
                     }
-                    
+
                     if let ipv6Server = set.urls?.ipv6IpOnly,
                        let url = URL(string: "https://\(ipv6Server)\(RMBTConfig.shared.RMBT_CONTROL_SERVER_PATH)") {
                         self.ipv6 = url
                     }
-                    
+
                     if let theOpenTestBase = set.urls?.opendataPrefix {
                         self.openTestBaseURL = theOpenTestBase
                     }
@@ -123,28 +139,49 @@ extension RMBTControlServer {
                        let url = URL(string: checkip4) {
                         self.checkIpv4 = url
                     }
-                    
+
                     if let checkip6 = set.urls?.ipv6IpCheck,
                        let url = URL(string: checkip6) {
                         self.checkIpv6 = url
                     }
-                    
+
                     if let tos = set.termsAndConditions {
                         self.termsAndConditions = tos
                     }
                 }
-                
-                success()
+
+                self.completeSettingsRequest(with: .success(()))
             }
 
-            request(.post, path: "/settings", requestObject: settingsRequest, success: success, error: { error in
-                Log.logger.debug("settings error")
-                failure(error)
+            request(.post, path: "/settings", requestObject: settingsRequest, success: handleSuccess, error: { error in
+                Log.logger.error("settings error: \(error)")
+                self.completeSettingsRequest(with: .failure(error))
             })
+        }
+
+        private func completeSettingsRequest(with result: Result<Void, Error>) {
+            let callbacks = settingsRequestQueue.sync { () -> [(success: EmptyCallback, failure: ErrorCallback)] in
+                self.settingsRequestInFlight = false
+                let callbacks = self.pendingSettingsCallbacks
+                self.pendingSettingsCallbacks.removeAll()
+                return callbacks
+            }
+
+            callbacks.forEach { callback in
+                switch result {
+                case .success:
+                    callback.success()
+                case .failure(let error):
+                    callback.failure(error)
+                }
+            }
         }
     
     ///
-    @objc func updateWithCurrentSettings(success successCallback: @escaping EmptyCallback, error failure: @escaping ErrorCallback) {
+    @objc func updateWithCurrentSettings(
+        success successCallback: @escaping EmptyCallback,
+        error failure: @escaping (_ error: Error?) -> Void
+    ) {
 
         if (RMBTSettings.shared.debugUnlocked && RMBTSettings.shared.debugControlServerCustomizationEnabled) {
             let scheme = RMBTSettings.shared.debugControlServerUseSSL ? "https" : "http"
@@ -165,7 +202,7 @@ extension RMBTControlServer {
 
         if self.uuid == nil,
             let key = uuidKey {
-            uuid = UserDefaults.checkStoredUUID(uuidKey: key)
+            uuid = KeychainHelper.checkStoredUUID(uuidKey: key)
         }
         
         Log.logger.info("Control Server base url = \(self.baseUrl)")
@@ -243,7 +280,7 @@ extension RMBTControlServer {
         }, error: error)
     }
     
-    @objc(getTestParamsWithRequest:success:error:) func getTestParams(with speedMeasurementRequest: SpeedMeasurementRequest_Old, success: @escaping RMBTSuccessBlock, error failure: @escaping ErrorCallback) {
+    @objc(getTestParamsWithRequest:success:error:) func getTestParams(with speedMeasurementRequest: SpeedMeasurementRequest_Old, success: @escaping RMBTSuccessBlock, error failure: @escaping (_ error: Error?) -> Void) {
         ensureClientUuid(success: { uuid in
             speedMeasurementRequest.uuid = uuid
             speedMeasurementRequest.ndt = false
@@ -284,7 +321,24 @@ extension RMBTControlServer {
 //        }];
     }
     
-    @objc(getHistoryWithFilters:length:offset:success:error:) func getHistoryWithFilters(filters: HistoryFilterType?, length: UInt, offset: UInt, success: @escaping (_ response: HistoryWithFiltersResponse) -> Void, error errorCallback: @escaping ErrorCallback) {
+    @objc(getHistoryWithFilters:length:offset:success:error:) func getHistoryWithFilters(
+        filters: HistoryFilterType?,
+        length: UInt,
+        offset: UInt,
+        success: @escaping (_ response: HistoryWithFiltersResponse) -> Void,
+        error errorCallback: @escaping ErrorCallback
+    ) {
+        getHistoryWithFilters(
+            filters: filters,
+            length: length,
+            offset: offset,
+            includeCoverageFences: RMBTSettings.shared.coverageFeatureEnabled,
+            success: success,
+            error: errorCallback
+        )
+    }
+    
+    @objc(getHistoryWithFilters:length:offset:includeCoverageFences:success:error:) func getHistoryWithFilters(filters: HistoryFilterType?, length: UInt, offset: UInt, includeCoverageFences: Bool, success: @escaping (_ response: HistoryWithFiltersResponse) -> Void, error errorCallback: @escaping ErrorCallback) {
 
         ensureClientUuid(success: { uuid in
             let req = HistoryWithFiltersRequest()
@@ -292,6 +346,7 @@ extension RMBTControlServer {
             req.uuid = uuid
             req.resultLimit = NSNumber(value: length)
             req.resultOffset = NSNumber(value: offset)
+            req.includeCoverageFences = includeCoverageFences
             //
             if let theFilters = filters {
                 for filter in theFilters {
@@ -350,14 +405,35 @@ extension RMBTControlServer {
     }
     
     @objc(getHistoryOpenDataResultWithUUID:success:error:) func getHistoryOpenDataResult(with uuid: String, success: @escaping (_ response: RMBTOpenDataResponse) -> Void, error: @escaping RMBTErrorBlock) {
-        ensureClientUuid(success: { _ in
-            let path = "/opentests/\(uuid)"
-            self.request(.get, path: path, requestObject: nil, success: success, error: { resultError in
+        // Default behaviour: only 2xx considered success
+        getHistoryOpenDataResult(with: uuid, acceptableStatusCodes: 200..<300, success: success, error: error)
+    }
+
+    // Variant that allows customizing acceptable status codes for OpenData endpoint (e.g., include 404)
+    func getHistoryOpenDataResult(
+        with uuid: String,
+        acceptableStatusCodes: some Sequence<Int>,
+        success: @escaping (_ response: RMBTOpenDataResponse) -> Void,
+        error: @escaping RMBTErrorBlock
+    ) {
+        ensureClientUuid(
+            success: { _ in
+                let path = "/opentests/\(uuid)"
+                self.request(
+                    .get,
+                    overrideBaseURL: self.statisticServerURL,
+                    path: path,
+                    requestObject: nil,
+                    acceptableStatusCodes: acceptableStatusCodes,
+                    success: success,
+                    error: { resultError in
+                        error(resultError, nil)
+                    })
+            },
+            error: { resultError in
                 error(resultError, nil)
-            })
-        }, error: { resultError in
-            error(resultError, nil)
-        })
+            }
+        )
     }
     
     @objc(getHistoryQoSResultWithUUID:success:error:) func getHistoryQOSResultWithUUID(testUuid: String, success: @escaping (_ response: QosMeasurementResultResponse) -> Void, error failure: @escaping ErrorCallback) {
@@ -410,7 +486,46 @@ extension RMBTControlServer {
             }
         }, error: failure)
     }
-    
+
+    func submitCoverageResult(
+        _ coverageRequest: SendCoverageResultRequest,
+        acceptableStatusCodes: some Sequence<Int>,
+        success: @escaping (_ response: CoverageMeasurementSubmitResponse) -> (),
+        error failure: @escaping ErrorCallback
+    ) {
+        ensureClientUuid(
+            success: { uuid in
+                coverageRequest.clientUUID = uuid
+                self.request(
+                    .post,
+                    path: "/coverageResult",
+                    requestObject: coverageRequest,
+                    acceptableStatusCodes: acceptableStatusCodes,
+                    success: success,
+                    error: failure
+                )
+            },
+            error: failure
+        )
+    }
+
+    func getCoverageRequest(
+        _ request: CoverageRequestRequest,
+        loopUUID: String? = nil,
+        success: @escaping (_ response: SignalRequestResponse) -> (),
+        error failure: @escaping ErrorCallback
+    ) {
+        ensureClientUuid(
+            success: { uuid in
+                request.clientUUID = uuid
+                request.uuid = uuid
+                request.loopUUID = loopUUID
+                self.request(.post, path: "/coverageRequest", requestObject: request, success: success, error: failure)
+            },
+            error: failure
+        )
+    }
+
     ///
     @objc(getSyncCode:error:) func getSyncCode(success: @escaping (_ response: GetSyncCodeResponse) -> (), error failure: @escaping ErrorCallback) {
         ensureClientUuid(success: { uuid in
@@ -430,12 +545,12 @@ extension RMBTControlServer {
         }, error: failure)
     }
     
-    func getIpv4( success successCallback: @escaping IpResponseSuccessCallback, error failure: @escaping ErrorCallback) {
+    func getIpv4( success successCallback: @escaping IpResponseSuccessCallback, error failure: @escaping (_ error: Error?) -> Void) {
         guard let url = self.checkIpv4 else { failure(nil); return }
         getIpVersion(baseUrl: url.absoluteString, success: successCallback, error: failure)
     }
     
-    func getIpv6( success successCallback: @escaping IpResponseSuccessCallback, error failure: @escaping ErrorCallback) {
+    func getIpv6( success successCallback: @escaping IpResponseSuccessCallback, error failure: @escaping (_ error: Error?) -> Void) {
         guard let url = self.checkIpv6 else { failure(nil); return }
         getIpVersion(baseUrl: url.absoluteString, success: successCallback, error: failure)
     }
@@ -471,12 +586,27 @@ extension RMBTControlServer {
             }
         }
     }
-    
+
+    func getTestExport(into format: TestExportFormat, openTestUUIDs: [String]) async throws -> URL {
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.timeoutIntervalForRequest = 60.0
+        sessionConfig.timeoutIntervalForResource = 60.0
+        let session = URLSession(configuration: sessionConfig)
+
+        return try await session.download(
+            for: format.downloadRequest(
+                baseURL: statisticServerURL ?? URL(string: "https://app-cloud.netztest.at/RMBTStatisticServer")!,
+                openTestUUIDs: openTestUUIDs,
+                maxResults: openTestUUIDs.count > 1 ? min(openTestUUIDs.count, 100) : nil
+            )
+        ).0
+    }
+
     func clearStoredUUID() {
         baseUrl = RMBTConfig.shared.RMBT_CONTROL_SERVER_URL
         uuidKey = "\(storeUUIDKey)\(URL(string: baseUrl)!.host!)"
         
-        UserDefaults.clearStoredUUID(uuidKey: uuidKey)
+        KeychainHelper.clearStoredUUID(uuidKey: uuidKey)
         self.uuid = nil
     }
     
@@ -484,8 +614,25 @@ extension RMBTControlServer {
         ServerHelper.requestArray(alamofireManager, baseUrl: baseUrl, method: method, path: path, requestObject: requestObject, success: success, error: failure)
     }
 
-    private func request<T: BasicResponse>(_ method: Alamofire.HTTPMethod, path: String, requestObject: BasicRequest?, success: @escaping  (_ response: T) -> (), error failure: @escaping ErrorCallback) {
-        ServerHelper.request(alamofireManager, baseUrl: baseUrl, method: method, path: path, requestObject: requestObject, success: success, error: failure)
+    private func request<T: BasicResponse>(
+        _ method: Alamofire.HTTPMethod,
+        overrideBaseURL: URL? = nil,
+        path: String,
+        requestObject: BasicRequest?,
+        acceptableStatusCodes: some Sequence<Int> = 200..<300,
+        success: @escaping  (_ response: T) -> (),
+        error failure: @escaping ErrorCallback
+    ) {
+        ServerHelper.request(
+            alamofireManager,
+            baseUrl: overrideBaseURL?.absoluteString ?? baseUrl,
+            method: method,
+            path: path,
+            requestObject: requestObject,
+            acceptableStatusCodes: acceptableStatusCodes,
+            success: success,
+            error: failure
+        )
     }
     
     private func request<T: BasicResponse>(_ baseUrl: String?, _ method: Alamofire.HTTPMethod, path: String, requestObject: BasicRequest?, success: @escaping  (_ response: T) -> (), error failure: @escaping ErrorCallback) {

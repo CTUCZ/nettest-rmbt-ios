@@ -1,0 +1,144 @@
+//
+//  Fence.swift
+//  RMBT
+//
+//  Created by Jiri Urbasek on 12/12/24.
+//  Copyright 2024 appscape gmbh. All rights reserved.
+//
+
+import CoreLocation
+import SwiftUI
+import CoreTelephony
+
+struct Fence: Identifiable, Hashable {
+    private(set) var locations: [CLLocation]
+    private(set) var pings: [PingResult]
+    private(set) var technologies: [String]
+    private(set) var radiusMeters: CLLocationDistance
+    var sessionUUID: String?
+
+    let startingLocation: CLLocation
+    let id: UUID = UUID()
+    let dateEntered: Date
+    private(set) var dateExited: Date?
+
+    init(startingLocation: CLLocation, dateEntered: Date, technology: String?, pings: [PingResult] = [], radiusMeters: CLLocationDistance, sessionUUID: String? = nil) {
+        self.dateEntered = dateEntered
+        self.startingLocation = startingLocation
+        self.locations = [startingLocation]
+        self.pings = pings
+        technologies = technology.map { [$0] } ?? []
+        self.radiusMeters = radiusMeters
+        self.sessionUUID = sessionUUID
+    }
+
+    mutating func append(location: CLLocation) {
+        locations.append(location)
+    }
+
+    mutating func append(ping: PingResult) {
+        pings.append(ping)
+    }
+
+    mutating func append(technology: String) {
+        technologies.append(technology)
+    }
+
+    mutating func exit(at date: Date) {
+        dateExited = date
+    }
+}
+
+extension Fence {
+    static let mockFences: [Fence] = [
+        .init(
+            startingLocation: CLLocation(
+                latitude: 49.74805411063806,
+                longitude: 13.37696845562318
+            ),
+            dateEntered: .init(timeIntervalSince1970: 1734526653),
+            technology: CTRadioAccessTechnologyHSDPA,
+            pings: [.init(result: .interval(.milliseconds(122)), timestamp: .init(timeIntervalSince1970: 1734526653))],
+            radiusMeters: 5
+        ),
+        .init(
+            startingLocation: CLLocation(
+                latitude: 49.747849194587204,
+                longitude: 13.376917714305671
+            ),
+            dateEntered: .init(timeIntervalSince1970: 1734526656),
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [.init(result: .interval(.milliseconds(84)), timestamp: .init(timeIntervalSince1970: 1734526656))],
+            radiusMeters: 5
+        ),
+        .init(
+            startingLocation: CLLocation(
+                latitude: 49.746123456789,
+                longitude: 13.378456789012
+            ),
+            dateEntered: .init(timeIntervalSince1970: 1734526700),
+            technology: CTRadioAccessTechnologyNR,
+            pings: [.init(result: .interval(.milliseconds(45)), timestamp: .init(timeIntervalSince1970: 1734526700))],
+            radiusMeters: 5
+        ),
+        .init(
+            startingLocation: CLLocation(
+                latitude: 49.749876543210,
+                longitude: 13.375123456789
+            ),
+            dateEntered: .init(timeIntervalSince1970: 1734526750),
+            technology: CTRadioAccessTechnologyWCDMA,
+            pings: [.init(result: .interval(.milliseconds(156)), timestamp: .init(timeIntervalSince1970: 1734526750))],
+            radiusMeters: 5
+        )
+    ]
+    
+    var averagePingMilliseconds: Double? {
+        let pingsDurations = pings.compactMap(\.interval)
+        if pingsDurations.isEmpty { return nil }
+        return pingsDurations.map(\.milliseconds).average
+    }
+
+    var averagePing: Int? {
+        averagePingMilliseconds.map { Int($0) }
+    }
+    
+    var significantTechnology: String? {
+        technologies.last
+    }
+
+    /// Whether the fence represents "no coverage" and must be drawn grey on the map.
+    ///
+    /// True when the device had no connectivity (no radio technology, i.e. the `1000`
+    /// network id), or when it was registered to a technology yet every recorded ping
+    /// failed — meaning no real communication was possible.
+    ///
+    /// A fence that has not received any ping result yet (e.g. a freshly opened current
+    /// fence) is treated as pending rather than no-coverage, so it keeps its technology
+    /// color until the first ping result arrives; if that first result is a failure it turns
+    /// grey immediately. Finalized fences that never recorded a ping are reconstructed with a
+    /// failed ping (see history/resend mapping), so they remain grey.
+    ///
+    /// Pings that fail because the IP changed trigger a session reinitialisation and are
+    /// never recorded as results, so a non-empty `pings` with a `nil` `averagePing` always
+    /// means every recorded ping genuinely failed rather than an invalid point. Applies
+    /// live, after the test, and in history.
+    var isNoCoverage: Bool {
+        if significantTechnology == nil { return true }
+        if pings.isEmpty { return false }
+        return averagePing == nil
+    }
+    
+    var coordinate: CLLocationCoordinate2D {
+        startingLocation.coordinate
+    }
+}
+
+extension PingResult {
+    var interval: Duration? {
+        switch self.result {
+        case .interval(let duration): duration
+        case .error: nil
+        }
+    }
+}

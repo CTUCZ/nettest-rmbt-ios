@@ -1,0 +1,2592 @@
+//
+//  NetworkCoverageViewModelTests.swift
+//  RMBTTest
+//
+//  Created by Jiri Urbasek on 13.01.2025.
+//  Copyright 2025 appscape gmbh. All rights reserved.
+//
+
+import Testing
+@testable import RMBT
+import Combine
+import CoreLocation
+import MapKit
+import SwiftData
+import SwiftUI
+import CoreTelephony
+import Clocks
+
+@MainActor struct NetworkCoverageTests {
+    @Test func whenInitializedWithNoPrefilledFences_thenFenceItemsAreEmpty() async throws {
+        let sut = makeSUT(fences: [])
+        #expect(sut.fenceItems.isEmpty)
+    }
+
+    @Test func whenReceivingFirstLocationUpdate_thenCreatesFirstFence() async throws {
+        let sut = makeSUT(updates: [makeLocationUpdate(at: 5, lat: 1.0, lon: 2.0)])
+        await sut.startTest()
+
+        #expect(sut.fenceItems.count == 1)
+        #expect(sut.fenceItems.first?.coordinate.latitude == 1.0)
+        #expect(sut.fenceItems.last?.coordinate.longitude == 2.0)
+    }
+
+    @Test func whenReceivingFirstPreciseLocation_thenCreatesFenceWithDynamicRadius() async throws {
+        let sut = makeSUT(
+            updates: [
+                makeLocationUpdate(at: 0, lat: 1.0, lon: 2.0, accuracy: 8, speed: 4)
+            ]
+        )
+
+        await sut.startTest()
+
+        #expect(sut.fenceItems.count == 1)
+        #expect(sut.fenceItems.first?.radiusMeters == 26)
+        #expect(sut.currentFenceRadius == 26)
+        #expect(sut.currentDynamicRadius == 26)
+    }
+
+    @Test func whenCurrentLocationRadiusShrinks_thenLeavingFenceUsesStoredRadius() async throws {
+        let sut = makeSUT(
+            updates: [
+                makeLocationUpdate(at: 0, lat: 0.0, lon: 0.0, accuracy: 10),
+                makeLocationUpdate(at: 1, lat: 0.00018, lon: 0.0, accuracy: 1),
+                makeLocationUpdate(at: 2, lat: 0.00031, lon: 0.0, accuracy: 1)
+            ]
+        )
+
+        await sut.startTest()
+
+        #expect(sut.fenceItems.count == 2)
+        #expect(sut.fenceItems.map(\.radiusMeters) == [30, 15])
+        #expect(sut.fenceItems.map(\.date).map(\.timeIntervalSinceReferenceDate) == [0, 2])
+    }
+
+    @Test func whenOpeningNewFenceAfterSpeedChanges_thenNewFenceStoresNewDynamicRadius() async throws {
+        let sut = makeSUT(
+            updates: [
+                makeLocationUpdate(at: 0, lat: 0.0, lon: 0.0, accuracy: 1),
+                makeLocationUpdate(at: 1, lat: 0.0003, lon: 0.0, accuracy: 1, speed: 40)
+            ]
+        )
+
+        await sut.startTest()
+
+        #expect(sut.fenceItems.count == 2)
+        #expect(sut.fenceItems.map(\.radiusMeters) == [15, 40])
+        #expect(sut.currentFenceRadius == 40)
+        #expect(sut.currentDynamicRadius == 40)
+    }
+
+    @Test func whenReceivingMultiplePingsForOneLocation_thenCombinesPingTotalValue() async throws {
+        let sut = makeSUT(updates: [
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 2, ms: 10),
+            makePingUpdate      (at: 3, ms: 20),
+            makePingUpdate      (at: 4, ms: 26),
+            makeLocationUpdate  (at: 5, lat: 2.0, lon: 1.0),
+        ])
+        await sut.startTest()
+
+        #expect(sut.fenceItems.count == 2)
+
+        sut.selectedFenceItem = sut.fenceItems.first
+        #expect(sut.selectedFenceDetail?.averagePing == "18 ms")
+
+        sut.selectedFenceItem = sut.fenceItems.last
+        #expect(sut.selectedFenceDetail?.averagePing == "")
+    }
+
+    // MARK: - Fence coverage coloring (issue #90)
+
+    @Test func whenFenceHasTechnologyAndSuccessfulPing_thenFenceItemUsesTechnologyColor() async throws {
+        let fence = makeFence(
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 1))]
+        )
+        let sut = makeSUT(fences: [fence])
+
+        let item = try #require(sut.fenceItems.first)
+        #expect(item.color == Color(technology: CTRadioAccessTechnologyLTE.radioTechnologyDisplayValue))
+        #expect(item.color != Color(technology: nil))
+    }
+
+    @Test func whenFenceHasTechnologyButAllPingsFailed_thenFenceItemIsGrey() async throws {
+        let fence = makeFence(
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [
+                PingResult(result: .error, timestamp: makeDate(offset: 1)),
+                PingResult(result: .error, timestamp: makeDate(offset: 2)),
+                PingResult(result: .error, timestamp: makeDate(offset: 3))
+            ]
+        )
+        let sut = makeSUT(fences: [fence])
+
+        let item = try #require(sut.fenceItems.first)
+        #expect(item.color == Color(technology: nil))
+    }
+
+    @Test func whenFenceHasTechnologyButNoPingsYet_thenFenceItemKeepsTechnologyColor() async throws {
+        // A freshly opened fence that has not received any ping result yet is pending, not
+        // no-coverage, so it keeps its technology color until the first ping arrives.
+        let fence = makeFence(technology: CTRadioAccessTechnologyLTE, pings: [])
+        let sut = makeSUT(fences: [fence])
+
+        let item = try #require(sut.fenceItems.first)
+        #expect(item.color == Color(technology: CTRadioAccessTechnologyLTE.radioTechnologyDisplayValue))
+        #expect(item.color != Color(technology: nil))
+    }
+
+    @Test func whenFenceFirstPingFails_thenFenceItemBecomesGrey() async throws {
+        // As soon as the first ping result arrives and it is a failure, the fence is grey.
+        let fence = makeFence(
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [PingResult(result: .error, timestamp: makeDate(offset: 1))]
+        )
+        let sut = makeSUT(fences: [fence])
+
+        let item = try #require(sut.fenceItems.first)
+        #expect(item.color == Color(technology: nil))
+    }
+
+    @Test func whenFenceHasNoConnectivity_thenFenceItemIsGrey() async throws {
+        let fence = makeFence(
+            technology: nil,
+            pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 1))]
+        )
+        let sut = makeSUT(fences: [fence])
+
+        let item = try #require(sut.fenceItems.first)
+        #expect(item.color == Color(technology: nil))
+    }
+
+    @Test func whenSelectingFences_thenDetailColorFollowsCoverage() async throws {
+        let covered = makeFence(
+            lat: 0.0, lon: 0.0,
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 1))]
+        )
+        let noCoverage = makeFence(
+            lat: 0.001, lon: 0.0,
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [PingResult(result: .error, timestamp: makeDate(offset: 2))]
+        )
+        let sut = makeSUT(fences: [covered, noCoverage])
+
+        sut.selectedFenceItem = sut.fenceItems.first { $0.id == noCoverage.id }
+        #expect(sut.selectedFenceDetail?.color == Color(technology: nil))
+
+        sut.selectedFenceItem = sut.fenceItems.first { $0.id == covered.id }
+        #expect(sut.selectedFenceDetail?.color == Color(technology: CTRadioAccessTechnologyLTE.radioTechnologyDisplayValue))
+    }
+
+    @Test func whenReceivedPingsWithTimeBeforeFenceChanged_thenTheyAreAssignedToPreviousFence() async throws {
+        let sut = makeSUT(updates: [
+            makeLocationUpdate  (at: 0, lat: 1, lon: 1),
+            makePingUpdate      (at: 1, ms: 10),
+            makeLocationUpdate  (at: 5, lat: 2, lon: 2),
+            makePingUpdate      (at: 2, ms: 2000),
+            makePingUpdate      (at: 3, ms: 3000),
+            makeLocationUpdate  (at: 10, lat: 3, lon: 3),
+            makePingUpdate      (at: 11, ms: 100),
+            makePingUpdate      (at: 18, ms: 200),
+            makeLocationUpdate  (at: 20, lat: 4, lon: 4),
+            makeLocationUpdate  (at: 30, lat: 5, lon: 5),
+            makePingUpdate      (at: 31, ms: 100),
+            makePingUpdate      (at: 37, ms: 200),
+            makeLocationUpdate  (at: 40, lat: 6, lon: 6),
+            makePingUpdate      (at: 41, ms: 400),
+            makePingUpdate      (at: 42, ms: 200),
+            makePingUpdate      (at: 22, ms: 2000),
+            makePingUpdate      (at: 24, ms: 4000),
+            makePingUpdate      (at: 34, ms: 3000)
+
+        ])
+        await sut.startTest()
+
+        #expect(sut.fenceItems
+            .map(\.id)
+            .map { fenceId in
+                sut.selectedFenceItem = sut.fenceItems.first { $0.id == fenceId }
+                return sut.selectedFenceDetail?.averagePing ?? "(no detail selected)"
+            } == [
+                "1670 ms",  // t = 0 - 5
+                "",         // t = 5 - 10
+                "150 ms",   // t = 10 - 20
+                "3000 ms",  // t = 20 - 30
+                "1100 ms",  // t = 30 = 40
+                "300 ms"    // t = 40+
+            ]
+        )
+    }
+
+    @Test func whenReceivingPingsForDifferentLocations_thenAssignesPingsToProperLocations() async throws {
+        let sut = makeSUT(updates: [
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 2, ms: 10),
+            makePingUpdate      (at: 3, ms: 20),
+            makeLocationUpdate  (at: 4, lat: 2.0, lon: 1.0),
+            makePingUpdate      (at: 5, ms: 26)
+        ])
+        await sut.startTest()
+
+        #expect(sut.fenceItems.count == 2)
+
+        sut.selectedFenceItem = sut.fenceItems.first
+        #expect(sut.selectedFenceDetail?.averagePing == "15 ms")
+
+        sut.selectedFenceItem = sut.fenceItems.last
+        #expect(sut.selectedFenceDetail?.averagePing == "26 ms")
+    }
+
+    @Test func whenReceivedNoPings_thenLatestPingIsNotAvailable() async throws {
+        let sut = makeSUT(
+            updates: [
+                makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+                makeLocationUpdate  (at: 2, lat: 1.0, lon: 1.0)
+            ]
+        )
+        await sut.startTest()
+
+        #expect(sut.latestPing == "N/A")
+    }
+
+    @MainActor @Suite("Map Rendering")
+    struct MapRenderingTests {
+        private let equatorWideRegion = MKCoordinateRegion(center: .init(latitude: 0.0015, longitude: 0.0), span: .init(latitudeDelta: 0.05, longitudeDelta: 0.05))
+        private let equatorTightRegion = MKCoordinateRegion(center: .init(latitude: 0.0015, longitude: 0.0), span: .init(latitudeDelta: 0.01, longitudeDelta: 0.01))
+        private let midRangeRegion = MKCoordinateRegion(center: .init(latitude: 0.005, longitude: 0.0), span: .init(latitudeDelta: 0.02, longitudeDelta: 0.02))
+        private let broadRegion = MKCoordinateRegion(center: .init(latitude: 0.05, longitude: 0.0), span: .init(latitudeDelta: 0.5, longitudeDelta: 0.5))
+        private let farRegion = MKCoordinateRegion(center: .init(latitude: 0.25, longitude: 0.0), span: .init(latitudeDelta: 1.0, longitudeDelta: 1.0))
+        private let nearRegion = MKCoordinateRegion(center: .init(latitude: 0.02, longitude: 0.0), span: .init(latitudeDelta: 0.2, longitudeDelta: 0.2))
+        private let zeroSpanRegion = MKCoordinateRegion(center: .init(latitude: 0, longitude: 0), span: .init(latitudeDelta: 0, longitudeDelta: 0))
+
+        private let viennaCoordinate = CLLocationCoordinate2D(latitude: 48.2082, longitude: 16.3738)
+        private let bratislavaCoordinate = CLLocationCoordinate2D(latitude: 48.1486, longitude: 17.1077)
+
+        @Test func whenZoomedOutBeyondThreshold_thenSwitchesToPolylineMode() async throws {
+            let fences = [
+                makeFence(lat: 0.0000, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.0001, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.0002, lon: 0.0, technology: "5G", radiusMeters: 0),
+                makeFence(lat: 0.0003, lon: 0.0, technology: "5G", radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 4,
+                minimumSpanForPolylineMode: 0.02,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: false
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            #expect(sut.mapRenderMode == .circles)
+            #expect(sut.fencePolylineSegments.isEmpty)
+
+            sut.updateVisibleRegion(equatorWideRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            #expect(sut.fencePolylineSegments.count == 2)
+            #expect(sut.fencePolylineSegments.map(\.technology) == ["4G", "5G"])
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+
+            sut.updateVisibleRegion(equatorTightRegion)
+
+            #expect(sut.mapRenderMode == .circles)
+            #expect(sut.fencePolylineSegments.isEmpty)
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+        }
+
+        @Test func whenSameTechnologyFencesChangeCoverage_thenPolylineSplitsColoredAndGreySegments() async throws {
+            let fences = [
+                makeFence(lat: 0.0000, lon: 0.0, technology: CTRadioAccessTechnologyLTE, pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 1))], radiusMeters: 0),
+                makeFence(lat: 0.0001, lon: 0.0, technology: CTRadioAccessTechnologyLTE, pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 2))], radiusMeters: 0),
+                makeFence(lat: 0.0002, lon: 0.0, technology: CTRadioAccessTechnologyLTE, pings: [PingResult(result: .error, timestamp: makeDate(offset: 3))], radiusMeters: 0),
+                makeFence(lat: 0.0003, lon: 0.0, technology: CTRadioAccessTechnologyLTE, pings: [PingResult(result: .error, timestamp: makeDate(offset: 4))], radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 4,
+                minimumSpanForPolylineMode: 0.02,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: false
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+            sut.updateVisibleRegion(equatorWideRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            // Same technology throughout, but coverage flips, so the run splits into a
+            // colored segment followed by a grey (no-coverage) one.
+            #expect(sut.fencePolylineSegments.count == 2)
+            #expect(sut.fencePolylineSegments.map(\.technology) == ["4G", "4G"])
+            #expect(sut.fencePolylineSegments.map(\.color) == [
+                Color(technology: CTRadioAccessTechnologyLTE.radioTechnologyDisplayValue),
+                Color(technology: nil)
+            ])
+        }
+
+        @Test func whenCullingEnabled_thenVisibleFenceItemsAreFilteredToRegion() async throws {
+            let fences = [
+                makeFence(lat: 0.0, lon: 0.0, radiusMeters: 0),
+                makeFence(lat: 0.01, lon: 0.0, radiusMeters: 0),
+                makeFence(lat: 0.20, lon: 0.0, radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: Int.max,
+                minimumSpanForPolylineMode: 1.0,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: true
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+
+            sut.updateVisibleRegion(midRangeRegion)
+
+            expectFenceItems(sut.visibleFenceItems, match: Array(fences.prefix(2)))
+
+            sut.updateVisibleRegion(broadRegion)
+
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+        }
+
+        @Test func whenRegionExcludesAllFencesThenReturnsOverFences_thenVisibleFencesAreRestored() async throws {
+            let fences = [
+                makeFence(lat: 0.0, lon: 0.0, radiusMeters: 0),
+                makeFence(lat: 0.01, lon: 0.0, radiusMeters: 0),
+                makeFence(lat: 0.20, lon: 0.0, radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: Int.max,
+                minimumSpanForPolylineMode: 1.0,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: true
+            )
+            let regionFarFromFences = MKCoordinateRegion(
+                center: .init(latitude: 60, longitude: 0),
+                span: .init(latitudeDelta: 0.001, longitudeDelta: 0.001)
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+
+            sut.updateVisibleRegion(regionFarFromFences)
+            #expect(sut.visibleFenceItems.isEmpty)
+
+            sut.updateVisibleRegion(broadRegion)
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+        }
+
+        @Test func whenCullingEnabled_thenPolylineSegmentsOutsideRegionAreHidden() async throws {
+            let fences = [
+                makeFence(lat: 0.0, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.0001, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.5, lon: 0.0, technology: "5G", radiusMeters: 0),
+                makeFence(lat: 0.5001, lon: 0.0, technology: "5G", radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 4,
+                minimumSpanForPolylineMode: 0.2,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: true
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            sut.updateVisibleRegion(farRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            #expect(sut.fencePolylineSegments.count == 2)
+
+            sut.updateVisibleRegion(nearRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            #expect(sut.fencePolylineSegments.count == 1)
+            #expect(sut.fencePolylineSegments.first?.technology == "4G")
+        }
+
+        @Test func whenPolylineModeStable_thenSegmentIdentifiersRemainStableAcrossUpdates() async throws {
+            let fences = [
+                makeFence(lat: 0.0000, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.0001, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.0002, lon: 0.0, technology: "5G", radiusMeters: 0),
+                makeFence(lat: 0.0003, lon: 0.0, technology: "5G", radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 4,
+                minimumSpanForPolylineMode: 0.02,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: false
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+            let region = equatorWideRegion
+
+            sut.updateVisibleRegion(region)
+            let firstIdentifiers = sut.fencePolylineSegments.map(\.id)
+
+            sut.updateVisibleRegion(region)
+
+            #expect(sut.fencePolylineSegments.map(\.id) == firstIdentifiers)
+        }
+
+        @Test func whenSameTechnologyDistanceExceedsGapThreshold_thenBreaksPolylineSegment() async throws {
+            let radius: CLLocationDistance = 10
+            let fences = [
+                makeFence(lat: 0.0000, lon: 0.0, technology: "4G", radiusMeters: radius),
+                makeFence(lat: 0.00009, lon: 0.0, technology: "4G", radiusMeters: radius),
+                makeFence(lat: 0.00050, lon: 0.0, technology: "4G", radiusMeters: radius),
+                makeFence(lat: 0.00059, lon: 0.0, technology: "4G", radiusMeters: radius)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 3,
+                minimumSpanForPolylineMode: 0.0001,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: false
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            sut.updateVisibleRegion(equatorWideRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            #expect(sut.fencePolylineSegments.count == 2)
+            #expect(sut.fencePolylineSegments.allSatisfy { $0.technology == "4G" })
+
+            let firstSegment = try #require(sut.fencePolylineSegments.first)
+            let secondSegment = try #require(sut.fencePolylineSegments.last)
+
+            #expect(firstSegment.coordinates.count == 2)
+            #expect(secondSegment.coordinates.count == 2)
+            #expect(firstSegment.coordinates.last == fences[1].startingLocation.coordinate)
+            #expect(secondSegment.coordinates.first == fences[2].startingLocation.coordinate)
+        }
+
+        @Test func whenTechnologyChangesWithoutGap_thenSegmentsShareBoundaryCoordinate() async throws {
+            let radius: CLLocationDistance = 10
+            let fences = [
+                makeFence(lat: 0.0000, lon: 0.0, technology: "4G", radiusMeters: radius),
+                makeFence(lat: 0.00009, lon: 0.0, technology: "4G", radiusMeters: radius),
+                makeFence(lat: 0.00018, lon: 0.0, technology: "5G", radiusMeters: radius)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 3,
+                minimumSpanForPolylineMode: 0.0001,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: false
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            sut.updateVisibleRegion(equatorWideRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            #expect(sut.fencePolylineSegments.count == 2)
+
+            let firstSegment = try #require(sut.fencePolylineSegments.first)
+            let secondSegment = try #require(sut.fencePolylineSegments.last)
+
+            #expect(firstSegment.technology == "4G")
+            #expect(secondSegment.technology == "5G")
+
+            let boundaryCoordinate = try #require(firstSegment.coordinates.last)
+
+            #expect(boundaryCoordinate == fences[1].startingLocation.coordinate)
+            #expect(secondSegment.coordinates.first == boundaryCoordinate)
+            #expect(secondSegment.coordinates.count == 2)
+            #expect(secondSegment.coordinates.last == fences[2].startingLocation.coordinate)
+            #expect(secondSegment.id.contains(fences[2].id.uuidString))
+            #expect(!secondSegment.id.contains(fences[1].id.uuidString))
+        }
+
+        @Test func whenFenceRadiusIsZero_thenPolylineSegmentsStillRender() async throws {
+            let fences = [
+                makeFence(lat: 0.0000, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.00005, lon: 0.0, technology: "4G", radiusMeters: 0),
+                makeFence(lat: 0.00010, lon: 0.0, technology: "5G", radiusMeters: 0),
+                makeFence(lat: 0.00015, lon: 0.0, technology: "5G", radiusMeters: 0)
+            ]
+
+            let configuration = FencesRenderingConfiguration(
+                maxCircleCountBeforePolyline: 3,
+                minimumSpanForPolylineMode: 0.0001,
+                visibleRegionPaddingFactor: 1.0,
+                cullsToVisibleRegion: false
+            )
+
+            let sut = makeSUT(fences: fences, renderingConfiguration: configuration)
+
+            sut.updateVisibleRegion(equatorWideRegion)
+
+            #expect(sut.mapRenderMode == .polylines)
+            #expect(sut.fencePolylineSegments.count == 2)
+            #expect(sut.fencePolylineSegments.map(\.technology) == ["4G", "5G"])
+        }
+
+        @Test func whenInitialized_thenVisibleFenceItemsMatchFences() async throws {
+            let fences = [
+                makeFence(lat: viennaCoordinate.latitude, lon: viennaCoordinate.longitude),
+                makeFence(lat: bratislavaCoordinate.latitude, lon: bratislavaCoordinate.longitude)
+            ]
+
+            let sut = makeSUT(fences: fences)
+
+            expectFenceItems(sut.fenceItems, match: fences)
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+            #expect(sut.mapRenderMode == .circles)
+        }
+
+        @Test func whenRegionWithZeroSpanReported_thenVisibleFencesStayVisible() async throws {
+            let fences = [
+                makeFence(lat: viennaCoordinate.latitude, lon: viennaCoordinate.longitude),
+                makeFence(lat: bratislavaCoordinate.latitude, lon: bratislavaCoordinate.longitude)
+            ]
+
+            let sut = makeSUT(fences: fences)
+
+            sut.updateVisibleRegion(zeroSpanRegion)
+
+            expectFenceItems(sut.visibleFenceItems, match: fences)
+            #expect(sut.mapRenderMode == .circles)
+        }
+    }
+
+    @Suite("Fences Map Region Coordinator")
+    struct FencesMapRegionCoordinatorTests {
+        private let initialRegion = MKCoordinateRegion(
+            center: .init(latitude: 48.2082, longitude: 16.3738),
+            span: .init(latitudeDelta: 0.1, longitudeDelta: 0.1)
+        )
+        private let pannedRegion = MKCoordinateRegion(
+            center: .init(latitude: 49.0, longitude: 17.0),
+            span: .init(latitudeDelta: 0.1, longitudeDelta: 0.1)
+        )
+
+        @Test func whenInitializedWithPreloadedFencesAndCameraReportsRegion_thenRegionIsForwarded() {
+            var sut = FencesMapRegionCoordinator(hasInitialItems: true, tracksUserLocation: false)
+
+            #expect(sut.regionToReport(for: initialRegion)?.center == initialRegion.center)
+        }
+
+        @Test func whenInitializedTrackingUserLocationWithoutFencesAndCameraReportsRegion_thenRegionIsForwarded() {
+            var sut = FencesMapRegionCoordinator(hasInitialItems: false, tracksUserLocation: true)
+
+            #expect(sut.regionToReport(for: initialRegion)?.center == initialRegion.center)
+        }
+
+        @Test func whenInitializedWithoutFencesAndWithoutTracking_thenInitialRegionIsSuppressed() {
+            var sut = FencesMapRegionCoordinator(hasInitialItems: false, tracksUserLocation: false)
+
+            #expect(sut.regionToReport(for: initialRegion) == nil)
+        }
+
+        @Test func whenSameRegionReportedTwice_thenSecondIsSuppressed() {
+            var sut = FencesMapRegionCoordinator(hasInitialItems: true, tracksUserLocation: false)
+            _ = sut.regionToReport(for: initialRegion)
+
+            #expect(sut.regionToReport(for: initialRegion) == nil)
+        }
+
+        @Test func whenVisibleItemsBecomeEmptyAfterInitialReport_thenSubsequentPanIsStillForwarded() {
+            var sut = FencesMapRegionCoordinator(hasInitialItems: true, tracksUserLocation: false)
+            _ = sut.regionToReport(for: initialRegion)
+
+            sut.visibleItemsDidChange(hasItems: false)
+
+            #expect(sut.regionToReport(for: pannedRegion)?.center == pannedRegion.center)
+        }
+
+        @Test func whenCoordinatorStartsClosedAndItemsAppear_thenCoordinatorAsksViewToCenter() {
+            var sut = FencesMapRegionCoordinator(hasInitialItems: false, tracksUserLocation: false)
+
+            let shouldCenter = sut.visibleItemsDidChange(hasItems: true)
+
+            #expect(shouldCenter)
+            #expect(sut.regionToReport(for: initialRegion)?.center == initialRegion.center)
+        }
+    }
+
+    @Test(arguments: [
+        [ // same location
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 2, ms: 10),
+            makePingUpdate      (at: 3, ms: 20),
+            makePingUpdate      (at: 4, ms: 30)
+        ],
+        [ // different locations
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 2, ms: 10),
+            makeLocationUpdate  (at: 3, lat: 2.0, lon: 2.0),
+            makePingUpdate      (at: 4, ms: 20),
+            makeLocationUpdate  (at: 5, lat: 3.0, lon: 3.0),
+            makePingUpdate      (at: 6, ms: 30)
+        ]
+    ])
+    func whenReceivedPingsBeforeCompletingRefreshInterval_thenLatestPingIsNotDisplayed(updates: [NetworkCoverageViewModel.Update]) async throws {
+        let sut = makeSUT(refreshInterval: 10, updates: updates)
+        await sut.startTest()
+        #expect(sut.latestPing == "-")
+    }
+
+    @Test(arguments: [
+        ([ // first interval, pings received withing the same fence
+            // refresh interval 0-9
+            makePingUpdate      (at: 0, ms: 10),
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 3, ms: 12),
+            makeLocationUpdate  (at: 4, lat: 1.00000001, lon: 1.00000001),
+            makePingUpdate      (at: 5, ms: 17),
+            // refresh interval 10-19
+            makeLocationUpdate  (at: 10, lat: 2, lon: 2),
+            makePingUpdate      (at: 11, ms: 20),
+            makePingUpdate      (at: 12, ms: 40),
+            makeLocationUpdate  (at: 13, lat: 2.00000001, lon: 2.000000001)
+         ], "13 ms"),
+        ([ // first interval, pings received withing different fences
+            // refresh interval 0-9
+            makePingUpdate      (at: 0, ms: 10),
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 3, ms: 12),
+            makeLocationUpdate  (at: 4, lat: 2.0, lon: 2.0),
+            makePingUpdate      (at: 5, ms: 17),
+            makeLocationUpdate  (at: 6, lat: 3.0, lon: 3.0),
+            makePingUpdate      (at: 7, ms: 13),
+            // refresh interval 10-19
+            makeLocationUpdate  (at: 10, lat: 2, lon: 2),
+            makePingUpdate      (at: 11, ms: 20),
+            makePingUpdate      (at: 12, ms: 40),
+            makeLocationUpdate  (at: 13, lat: 2.00000001, lon: 2.000000001)
+         ], "13 ms"),
+        ([ // third interval, pings received withing same fence
+            // refresh interval 0-9
+            makePingUpdate      (at: 0, ms: 5),
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 2, ms: 10),
+            makePingUpdate      (at: 3, ms: 20),
+            // refresh interval 10-19
+            makeLocationUpdate  (at: 10, lat: 2, lon: 2),
+            makePingUpdate      (at: 11, ms: 20),
+            makePingUpdate      (at: 12, ms: 40),
+            makeLocationUpdate  (at: 13, lat: 2.00000001, lon: 2.000000001),
+            // refresh interval 20-29
+            makePingUpdate      (at: 20, ms: 110),
+            makeLocationUpdate  (at: 21, lat: 2.00000002, lon: 2.000000002), // same fence as previous refresh interval
+            makePingUpdate      (at: 22, ms: 120),
+            makePingUpdate      (at: 23, ms: 130),
+            makePingUpdate      (at: 24, ms: 200),
+            // refresh interval 30-39
+            makePingUpdate      (at: 31, ms: 10),
+         ], "140 ms"),
+        ([ // third interval, pings received withing different fences
+            // refresh interval 0-9
+            makePingUpdate      (at: 0, ms: 5),
+            makeLocationUpdate  (at: 1, lat: 1.0, lon: 1.0),
+            makePingUpdate      (at: 2, ms: 10),
+            makePingUpdate      (at: 3, ms: 20),
+            makeLocationUpdate  (at: 4, lat: 2.0, lon: 2.0),
+            // refresh interval 10-19
+            makeLocationUpdate  (at: 10, lat: 2, lon: 2),
+            makePingUpdate      (at: 11, ms: 20),
+            makePingUpdate      (at: 12, ms: 40),
+            makeLocationUpdate  (at: 13, lat: 2.00000001, lon: 2.000000001),
+            makeLocationUpdate  (at: 15, lat: 3.0, lon: 3.0),
+            // refresh interval 20-29
+            makePingUpdate      (at: 20, ms: 110),
+            makeLocationUpdate  (at: 21, lat: 3.00000001, lon: 3.000001),
+            makePingUpdate      (at: 22, ms: 120),
+            makePingUpdate      (at: 23, ms: 130),
+            makeLocationUpdate  (at: 24, lat: 4.0, lon: 4.0),
+            makePingUpdate      (at: 25, ms: 200),
+            // refresh interval 30-39
+            makePingUpdate      (at: 31, ms: 10),
+         ], "140 ms")
+    ])
+    func whenReceivedPingsAfterCompletingRefreshInterval_thenLatestPingIsAverageOfAllPingsWithinLastCompletedRefreshInterva(arguments: (updates: [NetworkCoverageViewModel.Update], expectedLatestPing: String)) async {
+        let sut = makeSUT(refreshInterval: 10, updates: arguments.updates)
+        await sut.startTest()
+        #expect(sut.latestPing == arguments.expectedLatestPing)
+    }
+
+    @Test func whenTestRunsForFourHours_thenAutomaticallyStops() async throws {
+        let startTime = Date(timeIntervalSinceReferenceDate: 0)
+        let fourHoursInSeconds: TimeInterval = 4 * 60 * 60
+
+        var currentTime = startTime
+        let updates = [
+            makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0),
+            makePingUpdate(at: 1, ms: 100),
+            makeLocationUpdate(at: 2, lat: 2.0, lon: 2.0),
+            makePingUpdate(at: 3, ms: 200),
+        ]
+
+        let sut = makeSUT(
+            updates: updates,
+            currentTime: { currentTime },
+            maxTestDuration: { fourHoursInSeconds }
+        )
+
+        await sut.startTest()
+
+        // Simulate time passing to exactly 4 hours
+        currentTime = startTime.addingTimeInterval(fourHoursInSeconds)
+
+        // Process one more update to trigger the time check
+        await sut.toggleMeasurement() // This should stop due to time limit
+
+        // Verify test automatically stopped
+        #expect(!sut.isStarted)
+    }
+
+    @Test func whenTestRunsForLessThanFourHours_thenDoesNotAutoStop() async throws {
+        let startTime = Date(timeIntervalSinceReferenceDate: 0)
+        let threeHoursInSeconds: TimeInterval = 3 * 60 * 60
+
+        var currentTime = startTime
+        let updates = [
+            makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0),
+            makePingUpdate(at: 1, ms: 100),
+            makeLocationUpdate(at: 2, lat: 2.0, lon: 2.0),
+            makePingUpdate(at: 3, ms: 200),
+        ]
+
+        let sut = makeSUT(
+            updates: updates,
+            currentTime: { currentTime },
+            maxTestDuration: { 4 * 60 * 60 }
+        )
+
+        await sut.startTest()
+
+        // Simulate time passing to 3 hours (less than 4)
+        currentTime = startTime.addingTimeInterval(threeHoursInSeconds)
+
+        // Process updates - should not auto-stop
+        // Test should still be running
+        #expect(sut.isStarted)
+
+        // Verify both fences were created
+        #expect(sut.fenceItems.count == 2)
+        #expect(sut.fenceItems.first?.coordinate.latitude == 1.0)
+        #expect(sut.fenceItems.last?.coordinate.latitude == 2.0)
+    }
+
+    @MainActor @Suite("WHEN Received Location Updates With Bad Accuracy")
+    struct WhenReceivedLocationUpdatesWithBadAccuracy {
+        @Test func goodLocationUpdatesAreInsideSameFence_thenNoNewFenceIsCreated() async throws {
+            let minAccuracy = CLLocationDistance(100)
+            let sut = makeSUT(minimumLocationAccuracy: minAccuracy, updates: [
+                makeLocationUpdate  (at: 0, lat: 1.0000000001, lon: 1.0000000002, accuracy: minAccuracy / 2),
+                makePingUpdate      (at: 1, ms: 100),
+                makeLocationUpdate  (at: 2, lat: 2, lon: 2, accuracy: minAccuracy * 2),
+                makePingUpdate      (at: 3, ms: 20),
+                makePingUpdate      (at: 4, ms: 30),
+                makeLocationUpdate  (at: 5, lat: 1.0, lon: 1.0000000001, accuracy: minAccuracy / 3),
+                makePingUpdate      (at: 6, ms: 200),
+                makePingUpdate      (at: 7, ms: 150),
+                makeLocationUpdate  (at: 8, lat: 2, lon: 3, accuracy: minAccuracy + 1),
+                makePingUpdate      (at: 9, ms: 300),
+                makeLocationUpdate  (at: 10, lat: 1.00000000002, lon: 1.0000000003, accuracy: minAccuracy - 1),
+                makePingUpdate      (at: 11, ms: 150),
+            ])
+            await sut.startTest()
+
+            #expect(sut.fenceItems.count == 1)
+            #expect(sut.fenceItems.first?.date == Date(timeIntervalSinceReferenceDate: 0))
+            #expect(sut.fenceItems.first?.coordinate.latitude == 1.0000000001)
+            #expect(sut.fenceItems.first?.coordinate.longitude == 1.0000000002)
+        }
+
+        @Test func goodLocationUpdatesAreInsideDifferentFences_theNewFencesAreCreated() async throws {
+            let minAccuracy = CLLocationDistance(100)
+            let sut = makeSUT(minimumLocationAccuracy: minAccuracy, updates: [
+                makeLocationUpdate  (at: 0, lat: 1, lon: 1, accuracy: minAccuracy / 2),
+                makePingUpdate      (at: 1, ms: 100),
+                makeLocationUpdate  (at: 2, lat: 2, lon: 2, accuracy: minAccuracy * 2),
+                makePingUpdate      (at: 3, ms: 20),
+                makePingUpdate      (at: 4, ms: 30),
+                makeLocationUpdate  (at: 5, lat: 2.000000001, lon: 2.000000002, accuracy: minAccuracy / 3),
+                makePingUpdate      (at: 6, ms: 200),
+                makePingUpdate      (at: 7, ms: 150),
+                makeLocationUpdate  (at: 8, lat: 2, lon: 2.0000000002, accuracy: minAccuracy + 1),
+                makePingUpdate      (at: 9, ms: 300),
+                makeLocationUpdate  (at: 10, lat: 2.0, lon: 2.0000000003, accuracy: minAccuracy - 1),
+                makePingUpdate      (at: 11, ms: 150),
+                makeLocationUpdate  (at: 12, lat: 3, lon: 2.0000000003, accuracy: minAccuracy / 4)
+            ])
+            await sut.startTest()
+
+            #expect(sut.fenceItems.count == 3)
+            #expect(sut.fenceItems.map(\.date).map(\.timeIntervalSinceReferenceDate) == [0, 5, 12])
+            #expect(sut.fenceItems.map(\.coordinate) == [
+                .init(latitude: 1, longitude: 1),
+                .init(latitude: 2.000000001, longitude: 2.000000002),
+                .init(latitude: 3, longitude: 2.0000000003)
+            ])
+        }
+
+        @Test func pingsReceivedDuringTimeOfBadLocationAreIgnored() async throws {
+            let minAccuracy = CLLocationDistance(100)
+            let sut = makeSUT(minimumLocationAccuracy: minAccuracy, updates: [
+                makeLocationUpdate  (at: 0, lat: 1, lon: 1, accuracy: minAccuracy / 2),
+                makePingUpdate      (at: 1, ms: 100),
+                makeLocationUpdate  (at: 2, lat: 2, lon: 2, accuracy: minAccuracy * 2),
+                makePingUpdate      (at: 3, ms: 20),
+                makePingUpdate      (at: 4, ms: 30),
+                makeLocationUpdate  (at: 5, lat: 1, lon: 1.0000000001, accuracy: minAccuracy / 3),
+                makePingUpdate      (at: 6, ms: 200),
+                makePingUpdate      (at: 7, ms: 150),
+                makeLocationUpdate  (at: 8, lat: 2, lon: 3, accuracy: minAccuracy + 1),
+                makePingUpdate      (at: 9, ms: 300),
+                makeLocationUpdate  (at: 10, lat: 2, lon: 2.0000000003, accuracy: minAccuracy - 1),
+                makePingUpdate      (at: 11, ms: 400),
+                makeLocationUpdate  (at: 12, lat: 2.000000001, lon: 2.0000000002, accuracy: minAccuracy * 2),
+                makePingUpdate      (at: 13, ms: 600),
+                makeLocationUpdate  (at: 14, lat: 2.000000002, lon: 2.0000000003, accuracy: minAccuracy - 2),
+                makePingUpdate      (at: 15, ms: 200),
+            ])
+            await sut.startTest()
+
+            #expect(sut.fenceItems.count == 2)
+
+            sut.selectedFenceItem = sut.fenceItems.first
+            #expect(sut.selectedFenceDetail?.averagePing == "150 ms")
+
+            sut.selectedFenceItem = sut.fenceItems.last
+            #expect(sut.selectedFenceDetail?.averagePing == "300 ms")
+        }
+    }
+
+    @MainActor @Suite("Persistence")
+    struct Persistence {
+        @Test func whenStartedNewMeasurement_thenMarksSessionStartedWithoutTestUUID() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            var dateNow = makeDate(offset: 0)
+            let sut = makeSUT(
+                updates: [makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0)],
+                persistenceService: persistenceService,
+                currentTime: { dateNow }
+            )
+
+            dateNow = makeDate(offset: 10)
+            await sut.startTest()
+
+            let capturedMessages = await persistenceService.capturedMessages
+            #expect(capturedMessages == [.sessionStarted(date: dateNow)])
+        }
+
+        @Test func whenReceivedSessionInitialization_thenAssignesTestUUIDAsSessionID() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            let dateNow = makeDate(offset: 0)
+            let sessionInitilalizedOffset: TimeInterval = 20
+            let sessionID = "session-1"
+            let sut = makeSUT(
+                updates: [
+                    makeLocationUpdate          (at: 1, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate          (at: 2, lat: 1.0, lon: 1.0000001),
+                    makeLocationUpdate          (at: 3, lat: 2.0, lon: 1.0), // new fence starts -> previous gets saved
+                    makeLocationUpdate          (at: 4, lat: 2.0, lon: 1.0000001),
+                    makeLocationUpdate          (at: 5, lat: 3.0, lon: 1.0), // new fence starts -> previous gets saved
+                    makeSessionInitializedUpdate(at: 6, sessionID: sessionID),
+                    makeLocationUpdate          (at: 7, lat: 3.0, lon: 1.000001),
+                    makeLocationUpdate          (at: 8, lat: 4.0, lon: 1.0),  // new fence starts -> previous gets saved
+                ],
+                persistenceService: persistenceService,
+                currentTime: { dateNow }
+            )
+
+            await sut.startTest()
+
+            let capturedMessages = await persistenceService.capturedMessages
+            let fences = sut.fences
+            try #require(fences.count == 4)
+
+            #expect(capturedMessages == [
+                .sessionStarted(date: dateNow),
+                // Create expected fences[0], fences[1] withhout sessionUUID as they were when saved
+                .save(fence: fences[0].withoutSessionUUID()),
+                .save(fence: fences[1].withoutSessionUUID()),
+                .assign(testUUID: sessionID, anchorDate: makeDate(offset: 6)),
+                // fence[2] was saved AFTER session initialization (sessionUUID=sessionID)
+                .save(fence: fences[2]),
+            ])
+        }
+
+        @Test func whenRecordedFencesBeforeSessionInitialized_thenFencesAreStillSaved() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            var dateNow = makeDate(offset: 0)
+            let sessionInitilalizedOffset: TimeInterval = 20
+            let sessionID = "session-1"
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: sessionInitilalizedOffset, sessionID: sessionID)
+                ],
+                persistenceService: persistenceService,
+                currentTime: { dateNow }
+            )
+
+            dateNow = makeDate(offset: 10)
+            await sut.startTest()
+
+            let capturedMessages = await persistenceService.capturedMessages
+            #expect(capturedMessages == [
+                .sessionStarted(date: dateNow),
+                .assign(testUUID: sessionID, anchorDate: makeDate(offset: sessionInitilalizedOffset))
+            ])
+        }
+        @Test func whenStoppedMeasurement_thenMarksSessionFinalized() async throws {
+            let sessionID = "session-finalize"
+            let persistenceService = FencePersistenceServiceSpy()
+            var dateNow = makeDate(offset: 0)
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 1, sessionID: sessionID),
+                    makeLocationUpdate          (at: 2, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate          (at: 3, lat: 1.0, lon: 1.000001)
+                ],
+                persistenceService: persistenceService,
+                currentTime: { dateNow }
+            )
+
+            await sut.startTest()
+            dateNow = makeDate(offset: 5)
+            await sut.stopTest()
+
+            let capturedMessages = await persistenceService.capturedMessages
+            let savedFece = try #require(sut.fences.first)
+
+            #expect(capturedMessages == [
+                .sessionStarted(date: makeDate(offset: 0)),
+                .assign(testUUID: sessionID, anchorDate: makeDate(offset: 1)),
+                .save(fence: savedFece),
+                .sessionFinalized(date: makeDate(offset: 5))
+            ])
+        }
+
+        @Test func whenSubsequentSessionInitialized_thenCreatesNewSession() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let dateNow = makeDate(offset: 0)
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 1, sessionID: uuid1),
+                    makeLocationUpdate          (at: 2, lat: 1, lon: 1),
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2)
+                ],
+                persistenceService: persistenceService,
+                currentTime: { dateNow }
+            )
+
+            await sut.startTest()
+
+            let capturedMessages = await persistenceService.capturedMessages
+            // Reinit closes the active fence and saves it before creating the new session
+            let savedFence = await persistenceService.capturedSavedFences.first
+            #expect(capturedMessages == [
+                .sessionStarted(date: dateNow),
+                .assign(testUUID: uuid1, anchorDate: makeDate(offset: 1)),
+                .save(fence: savedFence!),
+                .assign(testUUID: uuid2, anchorDate: makeDate(offset: 3)),
+            ])
+        }
+
+        @Test func whenStopMeasurement_thenSendsAllFencesOnce() async throws {
+            let expectedTestUUID = "session-send"
+            let persistenceService = FencePersistenceServiceSpy()
+            let sendService = SendCoverageResultsServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 48.2082, lon: 16.3738),
+                    makePingUpdate(at: 1, ms: 30),
+                    makeLocationUpdate(at: 2, lat: 48.2084, lon: 16.3740)
+                ],
+                persistenceService: persistenceService,
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            let expectedFenceCount = sut.fenceItems.count
+
+            await sut.stopTest()
+
+            #expect(sendService.capturedSentFences == [sut.fences])
+            #expect(sendService.capturedSentFences.first?.count == expectedFenceCount)
+        }
+
+        @Test func whenStop_andCurrentSessionHasNoUUID_thenSessionIsKeptForLateAnchoring() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            var dateNow = Date(timeIntervalSinceReferenceDate: 0)
+            let sut = makeSUT(
+                updates: [makeLocationUpdate(at: 0, lat: 48.2082, lon: 16.3738)],
+                persistenceService: persistenceService,
+                currentTime: { dateNow }
+            )
+
+            dateNow = Date(timeIntervalSinceReferenceDate: 5)
+            await sut.startTest()
+            await Task.yield()
+            dateNow = Date(timeIntervalSinceReferenceDate: 10)
+            await sut.stopTest()
+
+            let capturedMessages = await persistenceService.capturedMessages
+            #expect(capturedMessages.contains(.sessionFinalized(date: dateNow)))
+            #expect(capturedMessages.contains(.deleteFinalizedNilUUIDSessions) == false)
+        }
+
+        @Test func whenReceivingLocationUpdatesAndPings_thenPersistsFencesIntoPersistenceLayer() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeLocationUpdate  (at: 0, lat: 1.0, lon: 1.0),
+                    makePingUpdate      (at: 1, ms: 100),
+                    makePingUpdate      (at: 2, ms: 200),
+                    makeLocationUpdate  (at: 3, lat: 2.0, lon: 2.0),
+                    makePingUpdate      (at: 4, ms: 300),
+                    makeLocationUpdate  (at: 5, lat: 2.000001, lon: 2.0000001),
+                    makePingUpdate      (at: 6, ms: 500),
+                    makeLocationUpdate  (at: 7, lat: 3.0, lon: 3.0),
+                ],
+                persistenceService: persistenceService
+            )
+            await sut.startTest()
+
+            let savedFences = await persistenceService.capturedSavedFences
+
+            try #require(savedFences.count == 2)
+
+            #expect(savedFences.first?.dateEntered ==  Date(timeIntervalSinceReferenceDate: 0))
+            #expect(savedFences.first?.startingLocation.coordinate.latitude == 1.0)
+            #expect(savedFences.first?.startingLocation.coordinate.longitude == 1.0)
+            #expect(savedFences.first?.averagePing == 150)
+            #expect(savedFences.first?.significantTechnology == nil)
+
+            #expect(savedFences.last?.dateEntered ==  Date(timeIntervalSinceReferenceDate: 3))
+            #expect(savedFences.last?.startingLocation.coordinate.latitude == 2.0)
+            #expect(savedFences.last?.startingLocation.coordinate.longitude == 2.0)
+            #expect(savedFences.last?.averagePing == 400)
+            #expect(savedFences.last?.significantTechnology == nil)
+        }
+
+        // MARK: - Session Reinitialization Tests
+        // NOTE: These tests document current behavior where stop() submits ALL fences.
+        // After implementing session boundary tracking, these expectations should be updated
+        // to expect only current session fences (see solution proposal in tmp/ folder).
+
+        @Test func whenSessionReinitializedAndStopped_thenSubmitsOnlyCurrentSessionFences() async throws {
+            // BUG: Currently stop() sends ALL accumulated fences from ALL sessions.
+            // EXPECTED: Should only send fences from the current session (session 2).
+            // Previous sessions' fences should be handled by the resend mechanism.
+
+            let sendService = SendCoverageResultsServiceSpy()
+            let persistenceService = FencePersistenceServiceSpy()
+            let session1UUID = "af307e9c-bb29-4690-9a96-6afc7412d216"
+            let session2UUID = "f415aa90-8260-49f9-9e27-c77db715f489"
+
+            let sut = makeSUT(
+                updates: [
+                    // Session 1 starts
+                    makeSessionInitializedUpdate(at: 0, sessionID: session1UUID),
+                    makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                    makePingUpdate(at: 2, ms: 100),
+                    makeLocationUpdate(at: 3, lat: 2.0, lon: 2.0), // Closes fence 0, opens fence 1
+                    makePingUpdate(at: 4, ms: 200),
+
+                    // Session 2 starts (reinitialization due to ping timeout)
+                    makeSessionInitializedUpdate(at: 5, sessionID: session2UUID),
+                    makeLocationUpdate(at: 6, lat: 3.0, lon: 3.0), // Closes fence 1, opens fence 2
+                    makePingUpdate(at: 7, ms: 300),
+                ],
+                persistenceService: persistenceService,
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+
+            // Verify we have 3 fences total in memory
+            // Fence 0 (lat 1.0): belongs to session 1
+            // Fence 1 (lat 2.0): belongs to session 1
+            // Fence 2 (lat 3.0): belongs to session 2
+            #expect(sut.fenceItems.count == 3)
+
+            await sut.stopTest()
+
+            let sentFences = try #require(sendService.capturedSentFences.first)
+
+            // ViewModel sends ALL fences to the service - filtering happens in the service layer
+            #expect(sentFences.count == 3, "ViewModel should send all fences to service")
+            #expect(sentFences.map { $0.startingLocation.coordinate.latitude } == [1.0, 2.0, 3.0])
+        }
+
+        @Test func whenMultipleSessionReinitsAndStopped_thenSubmitsOnlyCurrentSessionFences() async throws {
+            // BUG: Replicates the real-world scenario with 3 ping session reinitializations
+            // where 291 points (251 + 39 + new) were submitted with the final UUID.
+            // EXPECTED: Only fences from session 3 should be submitted.
+
+            let sendService = SendCoverageResultsServiceSpy()
+            let persistenceService = FencePersistenceServiceSpy()
+
+            let sut = makeSUT(
+                updates: [
+                    // Session 1: collect 2 fences (251 points in real bug)
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-session-1"),
+                    makeLocationUpdate(at: 1, lat: 10.0, lon: 10.0),
+                    makeLocationUpdate(at: 2, lat: 11.0, lon: 11.0), // fence 0 closed
+
+                    // Session 2: collect 2 more fences (39 points in real bug)
+                    makeSessionInitializedUpdate(at: 3, sessionID: "uuid-session-2"),
+                    makeLocationUpdate(at: 4, lat: 20.0, lon: 20.0), // fence 1 closed
+                    makeLocationUpdate(at: 5, lat: 21.0, lon: 21.0), // fence 2 closed
+
+                    // Session 3: collect 1 more fence (new points in real bug)
+                    makeSessionInitializedUpdate(at: 6, sessionID: "uuid-session-3"),
+                    makeLocationUpdate(at: 7, lat: 30.0, lon: 30.0), // fence 3 closed
+                ],
+                persistenceService: persistenceService,
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+
+            // Verify total fences accumulated in memory for UI display
+            #expect(sut.fenceItems.count == 5)
+
+            await sut.stopTest()
+
+            let sentFences = try #require(sendService.capturedSentFences.first)
+
+            // ViewModel sends ALL fences to the service - filtering by sessionUUID happens in the service layer
+            #expect(sentFences.count == 5, "ViewModel should send all fences to service")
+            #expect(sentFences.map { $0.startingLocation.coordinate.latitude } == [10.0, 11.0, 20.0, 21.0, 30.0])
+
+            // The persistence layer should have saved all fences to their respective sessions
+            let savedFences = await persistenceService.capturedSavedFences
+            #expect(savedFences.count == 5, "All fences should be persisted for resend mechanism")
+        }
+
+        // MARK: - Session UUID Tagging Tests
+        // These tests verify the solution for the duplicate submission bug by testing
+        // that fences are properly tagged with session UUIDs and only current session
+        // fences are submitted at stop().
+
+        @Test func whenOfflineStart_thenAssignFirstTestUUIDToOfflineFences() async throws {
+            let sessionUUID = "first-uuid-after-offline-start"
+            let sut = makeSUT(
+                updates: [
+                    // Create fences BEFORE session initialized (offline start)
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate(at: 1, lat: 2.0, lon: 2.0),
+                    makeLocationUpdate(at: 2, lat: 3.0, lon: 3.0),
+                    // NOW session initializes (network arrives)
+                    makeSessionInitializedUpdate(at: 3, sessionID: sessionUUID),
+                    // Create more fences AFTER UUID
+                    makeLocationUpdate(at: 4, lat: 4.0, lon: 4.0),
+                ]
+            )
+
+            await sut.startTest()
+
+            #expect(
+                sut.fences.map(\.sessionUUID) == [sessionUUID, sessionUUID, sessionUUID, sessionUUID],
+                "All fences should be tagged with first session UUID"
+            )
+        }
+
+        @Test func whenSessionReinitialized_thenLatestUnfinishedFenceUsesNewSessionUUID() async throws {
+            let uuid1 = "uuid-session-1"
+            let uuid2 = "uuid-session-2"
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 10.0, lon: 10.0),
+                    makeLocationUpdate(at: 2, lat: 11.0, lon: 11.0), // will become part of sesssion-2
+
+                    // Session reinitializes with new UUID
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+
+                    makeLocationUpdate(at: 4, lat: 20.0, lon: 20.0),
+                    makeLocationUpdate(at: 5, lat: 21.0, lon: 21.0),
+                ]
+            )
+
+            await sut.startTest()
+
+            #expect(sut.fences.map(\.sessionUUID) == [uuid1, uuid1, uuid2, uuid2])
+        }
+
+        @Test func whenFenceCreatedWithoutUUID_thenStaysNilUntilFirstUUIDArrives() async throws {
+            let sessionUUID = "delayed-uuid"
+            let sut = makeSUT(
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0),
+                ]
+            )
+
+            await sut.startTest()
+
+            #expect(sut.fences.map(\.sessionUUID) == [nil])
+        }
+
+        @Test func whenFenceSpansSessionBoundary_thenReceivesNewSessionUUIDBeforeClosed() async throws {
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0), // Fence starts
+                    makePingUpdate(at: 2, ms: 100), // Same fence
+
+                    // Session reinitializes while user is still in same fence
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+                    makePingUpdate(at: 4, ms: 200), // Still same fence
+
+                    // User finally moves, closing old fence and opening new one
+                    makeLocationUpdate(at: 5, lat: 2.0, lon: 2.0), // New fence
+                ]
+            )
+
+            await sut.startTest()
+
+            #expect(sut.fences.map(\.sessionUUID) == [uuid1, uuid2])
+        }
+
+        @Test func whenMultipleSessionReinitializations_thenAssingsLatestSesssionUUID() async throws {
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let uuid3 = "uuid-3"
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate(at: 2, lat: 2.0, lon: 2.0),
+
+                    // Rapid reinitializations
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+                    makeLocationUpdate(at: 3.5, lat: 2.0, lon: 2.000001),
+                    makeSessionInitializedUpdate(at: 4, sessionID: uuid3),
+
+                    // Now user moves
+                    makeLocationUpdate(at: 5, lat: 3.0, lon: 3.0),
+                    makeLocationUpdate(at: 6, lat: 4.0, lon: 4.0),
+                ]
+            )
+
+            await sut.startTest()
+
+            // Reinit closes active fence on previous session, next location creates new fence
+            #expect(sut.fences.map(\.sessionUUID) == [uuid1, uuid1, uuid2, uuid3, uuid3])
+        }
+
+        @Test func whenStopTestsSpanningOverMultipleSessions_thenSubmitsAllSessionsFences() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let uuid1 = "uuid-session-1"
+            let uuid2 = "uuid-session-2"
+            let uuid3 = "uuid-session-3"
+            let sut = makeSUT(
+                updates: [
+                    // Session 1: 2 fences
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 10.0, lon: 10.0),
+                    makeLocationUpdate(at: 2, lat: 11.0, lon: 11.0),
+
+                    // Session 2: 1 fence
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+                    makeLocationUpdate(at: 4, lat: 20.0, lon: 20.0),
+
+                    // Session 3: 2 fences
+                    makeSessionInitializedUpdate(at: 5, sessionID: uuid3),
+                    makeLocationUpdate(at: 6, lat: 30.0, lon: 30.0),
+                    makeLocationUpdate(at: 7, lat: 31.0, lon: 31.0),
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+
+            // All 5 fences should be in memory for UI
+            #expect(sut.fenceItems.count == 5)
+
+            await sut.stopTest()
+
+            let sentFences = try #require(sendService.capturedSentFences.first)
+
+            // ViewModel sends ALL fences to the service - filtering happens in service layer
+            #expect(sentFences.count == 5, "ViewModel should send all fences to service")
+            #expect(
+                sentFences.map { $0.startingLocation.coordinate.latitude } == [10.0, 11.0, 20.0, 30.0, 31.0],
+                "Should send all fences to service"
+            )
+        }
+
+        @Test func whenEmptySessionAfterReinit_thenStopSubmitsAllFences() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate(at: 2, lat: 2.0, lon: 2.0),
+
+                    // Session reinitializes
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+                    // User stops immediately without moving
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            await sut.stopTest()
+
+            let sentFences = try #require(sendService.capturedSentFences.first)
+
+            // ViewModel sends ALL fences to the service - service layer handles the empty-session case
+            #expect(sentFences.count == 2, "ViewModel should send all fences to service")
+            #expect(sentFences.map { $0.startingLocation.coordinate.latitude } == [1.0, 2.0])
+
+            // The persistence/service layer will filter and handle the resend-only path
+        }
+    }
+
+    @MainActor @Suite("Fence Selection Tests")
+    struct FenceSelectionTests {
+        @Test("WHEN initialized with no fences THEN no fence is selected and fenceItems are empty")
+        func whenInitializedWithNoFences_thenNoFenceIsSelectedAndFenceItemsAreEmpty() async throws {
+            let sut = makeSUT(fences: [])
+
+            #expect(sut.selectedFenceItem == nil)
+            #expect(sut.selectedFenceDetail == nil)
+            #expect(sut.fenceItems.isEmpty)
+        }
+
+        @Test("WHEN initialized with fences THEN no fence is selected initially")
+        func whenInitializedWithFences_thenNoFenceIsSelectedInitially() async throws {
+            let fences = [makeFence(lat: 1.0, lon: 1.0), makeFence(lat: 2.0, lon: 2.0)]
+            let sut = makeSUT(fences: fences)
+
+            #expect(sut.selectedFenceItem == nil)
+            #expect(sut.selectedFenceDetail == nil)
+            #expect(sut.fenceItems.map(\.isSelected) == [false, false])
+        }
+
+        @Test("WHEN valid fence ID is selected THEN fence is marked as selected and detail is populated")
+        func whenValidFenceIDIsSelected_thenFenceIsMarkedAsSelectedAndDetailIsPopulated() async throws {
+            let fence1 = makeFence(lat: 1.0, lon: 1.0)
+            let fence2 = makeFence(
+                lat: 2.0,
+                lon: 3.0,
+                dateEntered: Date(timeIntervalSinceReferenceDate: 1000),
+                technology: CTRadioAccessTechnologyLTE,
+                pings: [
+                    PingResult(result: .interval(.milliseconds(50)), timestamp: Date(timeIntervalSinceReferenceDate: 1001)),
+                    PingResult(result: .interval(.milliseconds(60)), timestamp: Date(timeIntervalSinceReferenceDate: 1002)),
+                    PingResult(result: .interval(.milliseconds(70)), timestamp: Date(timeIntervalSinceReferenceDate: 1003))
+                ]
+            )
+            let sut = makeSUT(fences: [fence1, fence2])
+
+            sut.simulateSelectFence(fence2)
+
+            #expect(sut.selectedFenceItem?.id == fence2.id)
+            #expect(sut.selectedFenceDetail?.id == fence2.id)
+
+            #expect(sut.selectedFenceDetail?.date == sut.selectedItemDateFormatter.string(from: Date(timeIntervalSinceReferenceDate: 1000)))
+
+            #expect(sut.selectedFenceDetail?.technology == "4G")
+            #expect(sut.selectedFenceDetail?.averagePing == "60 ms")
+            #expect(sut.selectedFenceDetail?.color == Color(technology: CTRadioAccessTechnologyLTE.radioTechnologyDisplayValue))
+            #expect(sut.fenceItems.map(\.isSelected) == [false, true])
+        }
+
+        @Test("WHEN selection is changed to different fence THEN previous fence is deselected and new one is selected")
+        func whenSelectionIsChangedToDifferentFence_thenPreviousFenceIsDeselectedAndNewOneIsSelected() async throws {
+            let fence1 = makeFence(lat: 1.0, lon: 1.0)
+            let fence2 = makeFence(lat: 2.0, lon: 2.0)
+            let fence3 = makeFence(lat: 3.0, lon: 3.0)
+            let sut = makeSUT(fences: [fence1, fence2, fence3])
+
+            sut.simulateSelectFence(fence1)
+            sut.simulateSelectFence(fence3)
+
+            #expect(sut.fenceItems.map(\.isSelected) == [false, false, true])
+        }
+
+        @Test("WHEN selection is set to nil THEN all fences are deselected")
+        func whenSelectionIsSetToNil_thenAllFencesAreDeselected() async throws {
+            let fence1 = makeFence(lat: 1.0, lon: 1.0)
+            let fence2 = makeFence(lat: 2.0, lon: 2.0)
+            let sut = makeSUT(fences: [fence1, fence2])
+
+            sut.simulateSelectFence(fence1)
+            sut.selectedFenceItem = nil
+
+            #expect(sut.selectedFenceItem == nil)
+            #expect(sut.selectedFenceDetail == nil)
+            #expect(sut.fenceItems.allSatisfy { !$0.isSelected })
+        }
+
+        @Test("WHEN non-existent fence ID is selected THEN selection remains nil and no fence is marked as selected")
+        func whenNonExistentFenceIDIsSelected_thenSelectionRemainsNilAndNoFenceIsMarkedAsSelected() async throws {
+            let fence1 = makeFence(lat: 1.0, lon: 1.0)
+            let fence2 = makeFence(lat: 2.0, lon: 2.0)
+            let sut = makeSUT(fences: [fence1, fence2])
+
+            let nonExistentFenceItem = FenceItem(
+                id: UUID(),
+                date: Date(),
+                coordinate: CLLocationCoordinate2D(),
+                radiusMeters: 0,
+                technology: "N/A",
+                isSelected: false,
+                isCurrent: false,
+                color: .gray
+            )
+            sut.selectedFenceItem = nonExistentFenceItem
+
+            #expect(sut.selectedFenceItem?.id == nonExistentFenceItem.id)
+            #expect(sut.selectedFenceDetail == nil)
+            #expect(sut.fenceItems.allSatisfy { !$0.isSelected })
+        }
+    }
+
+    @MainActor @Suite("Inaccurate Location Warningy")
+    struct InaccurateLocationWarningTests {
+        @Test func whenTestNotStarted_thenGpsInaccurateLocationWarningIsHidden() async throws {
+            let sut = makeSUT(updates: [])
+            #expect(sut.warningPopups.isEmpty)
+        }
+
+        @Test func whenJustStartedAndDelayNotElapsed_thenInaccurateLocationWarningIsHidden() async throws {
+            let clock = TestClock()
+            let sut = makeSUT(updates: [], overlayDelay: 3.0, clock: clock)
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(2.9))
+
+            #expect(sut.warningPopups == [])
+        }
+
+        @Test func whenDelayElapsedAndNoLocationYet_thenInaccurateLocationWarningIsHidden() async throws {
+            let clock = TestClock()
+            let sut = makeSUT(updates: [], overlayDelay: 3.0, clock: clock)
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(3.1))
+
+            #expect(sut.warningPopups == [])
+        }
+
+        @Test func whenDelayElapsedAndLocationAccuracyIsBad_thenInaccurateLocationWarningIsShown() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0, accuracy: minAccuracy * 2)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(3.1))
+
+            #expect(sut.warningPopups == [makeInaccurateLocationWarningPopup()])
+        }
+
+        @Test func whenDelayElapsedAndLocationAccuracyIsGood_thenInaccurateLocationWarningIsHidden() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0, accuracy: minAccuracy / 2)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(3.1))
+
+            #expect(sut.warningPopups == [])
+        }
+
+        @Test func whenOverlayWouldBeShown_thenStoppingMeasurementHidesIt() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0, accuracy: minAccuracy * 2)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(3.1))
+
+            #expect(sut.warningPopups == [makeInaccurateLocationWarningPopup()])
+
+            await sut.stopTest()
+            #expect(sut.warningPopups.isEmpty)
+        }
+
+        @Test func whenReceivedBadAfterGoodLocation_thenInaccurateLocationWarningIsShown() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1, lon: 1, accuracy: minAccuracy / 2),
+                    makeLocationUpdate(at: 1, lat: 1.00001, lon: 1.00001, accuracy: minAccuracy / 3),
+                    makeLocationUpdate(at: 2, lat: 1.00002, lon: 1.00002, accuracy: minAccuracy * 2)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(3.1))
+
+            #expect(sut.warningPopups == [makeInaccurateLocationWarningPopup()])
+        }
+
+        @Test func whenGoodBadGood_thenInaccurateLocationWarningIsHidden() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1, lon: 1, accuracy: minAccuracy / 2),
+                    makeLocationUpdate(at: 1, lat: 1.00001, lon: 1.00001, accuracy: minAccuracy * 2),
+                    makeLocationUpdate(at: 2, lat: 1.00002, lon: 1.00002, accuracy: minAccuracy / 3)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(3.1))
+
+            #expect(sut.warningPopups.isEmpty)
+        }
+
+        @Test func whenInsufficientAccuracyAutoStopIntervalPassedWithoutSufficientAccuracy_thenAutoStopsAndReportsReason() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let timeout: TimeInterval = 30 * 60
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    // Only inaccurate locations during the whole period
+                    makeLocationUpdate(at: 0, lat: 1, lon: 1, accuracy: minAccuracy * 2),
+                    makeLocationUpdate(at: 60, lat: 1, lon: 1, accuracy: minAccuracy * 3),
+                    makeLocationUpdate(at: timeout - 10, lat: 1, lon: 1, accuracy: minAccuracy * 2),
+                    makeLocationUpdate(at: timeout + 10, lat: 1, lon: 1, accuracy: minAccuracy / 2)
+                ],
+                currentTime: { Date(timeIntervalSinceReferenceDate: 0) },
+                clock: clock,
+                insufficientAccuracyAutoStopInterval: timeout
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(timeout))
+            await clock.run()
+
+            #expect(!sut.isStarted)
+            #expect(sut.stopTestReasons == [.insufficientLocationAccuracy(duration: timeout)])
+        }
+
+        @Test func whenAccurateLocationArrivesBeforeTimeout_thenDoesNotAutoStop() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let timeout: TimeInterval = 30 * 60
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1, lon: 1, accuracy: minAccuracy * 2),
+                    makeLocationUpdate(at: timeout - 10, lat: 1.00001, lon: 1.00001, accuracy: minAccuracy / 2)
+                ],
+                clock: clock,
+                insufficientAccuracyAutoStopInterval: timeout
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(timeout))
+            await clock.run()
+
+            #expect(sut.isStarted)
+            #expect(sut.stopTestReasons == [])
+        }
+
+        @Test func whenInaccurateLocationArrivesAfterAccurateOneBeforeTimeout_thenDoesNotAutoStop() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let timeout: TimeInterval = 30 * 60
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1, lon: 1, accuracy: minAccuracy * 2),
+                    makeLocationUpdate(at: 60, lat: 1.00001, lon: 1.00001, accuracy: minAccuracy / 2),
+                    makeLocationUpdate(at: timeout - 10, lat: 1.00001, lon: 1.00001, accuracy: minAccuracy * 2)
+                ],
+                overlayDelay: 0.0,
+                clock: clock,
+                insufficientAccuracyAutoStopInterval: timeout
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(timeout))
+
+            #expect(sut.isStarted)
+            #expect(sut.stopTestReasons == [])
+        }
+    }
+
+    @MainActor @Suite("Wi‑Fi Connection Warning")
+    struct WiFiConnectionWarningTests {
+        @Test func whenOnCellular_thenMeasurementProcessesUpdatesAndNoWiFiWarning() async throws {
+            let sut = makeSUT(updates: [
+                makeNetworkTypeUpdate   (at: 0, type: .cellular),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makePingUpdate          (at: 2, ms: 50)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.fenceItems.count == 1)
+            #expect(!sut.warningPopups.contains(makeWiFiWarningPopup()))
+        }
+
+        @Test func whenSwitchedToWiFi_thenShowWarningAndFencesContinueAsDirty() async throws {
+            let sut = makeSUT(updates: [
+                makeLocationUpdate      (at: 0, lat: 1.0, lon: 1.0),
+                makePingUpdate          (at: 1, ms: 50),
+                makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                // Fences continue on WiFi but are dirty; pings are blocked
+                makeLocationUpdate      (at: 3, lat: 3.0, lon: 3.0),
+                makePingUpdate          (at: 4, ms: 999)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.warningPopups == [makeWiFiWarningPopup()])
+            // Fences exist in memory but are dirty — hidden from map
+            #expect(sut.fences.count == 2)
+            #expect(sut.fenceItems.isEmpty, "Dirty fences hidden from map")
+            // Latest ping should remain unchanged (no completed refresh interval)
+            #expect(sut.latestPing == "-")
+            // Locations always appended
+            #expect(sut.locations.count == 2)
+        }
+
+        @Test func whenBackToCellular_thenHideWarningAndNewCleanFenceCreated() async throws {
+            let sut = makeSUT(updates: [
+                makeLocationUpdate      (at: 0, lat: 1.0, lon: 1.0),
+                makeNetworkTypeUpdate   (at: 1, type: .wifi),
+                // Fences continue on WiFi (dirty)
+                makeLocationUpdate      (at: 2, lat: 3.0, lon: 3.0),
+                makePingUpdate          (at: 3, ms: 999),
+                // Switch back to cellular — marks fence at 3.0 dirty too
+                makeNetworkTypeUpdate   (at: 4, type: .cellular),
+                // New fence created (clean)
+                makeLocationUpdate      (at: 5, lat: 5.0, lon: 5.0),
+                makePingUpdate          (at: 6, ms: 100)
+            ])
+
+            await sut.startTest()
+
+            #expect(!sut.warningPopups.contains(makeWiFiWarningPopup()))
+            // 3 fences in memory, but only the clean one visible on map
+            #expect(sut.fences.count == 3)
+            #expect(sut.fenceItems.count == 1, "Only clean fence at 5.0 visible on map")
+        }
+
+        @Test("WHEN a clean fence is selected after dirty fences exist THEN dirty fences remain hidden")
+        func whenSelectingFenceWhileDirtyFencesExist_thenDirtyFencesStayHidden() async throws {
+            let sut = makeSUT(updates: [
+                makeLocationUpdate      (at: 0, lat: 1.0, lon: 1.0),
+                // Switch to WiFi — subsequent fence becomes dirty
+                makeNetworkTypeUpdate   (at: 1, type: .wifi),
+                makeLocationUpdate      (at: 2, lat: 3.0, lon: 3.0),
+                // Back to cellular — new clean fence created
+                makeNetworkTypeUpdate   (at: 3, type: .cellular),
+                makeLocationUpdate      (at: 4, lat: 5.0, lon: 5.0)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.fences.count == 3)
+            #expect(sut.fenceItems.count == 1, "Only clean fence visible before selection")
+
+            let cleanFence = try #require(sut.fenceItems.first)
+            sut.selectedFenceItem = cleanFence
+
+            #expect(sut.fenceItems.count == 1, "Dirty fences must not reappear when a fence is selected")
+            #expect(sut.fenceItems.first?.id == cleanFence.id)
+            #expect(sut.fenceItems.first?.isSelected == true)
+
+            sut.selectedFenceItem = nil
+
+            #expect(sut.fenceItems.count == 1, "Dirty fences must not reappear on deselection either")
+            #expect(sut.fenceItems.first?.isSelected == false)
+        }
+
+        @Test func whenOnWiFiAndAccuracyIsBad_thenBothWiFiAndGpsWarningsAreShown() async throws {
+            let clock = TestClock()
+            let minAccuracy: CLLocationDistance = 10
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeNetworkTypeUpdate   (at: 0, type: .wifi),
+                    makeLocationUpdate      (at: 2, lat: 1.0, lon: 1.0, accuracy: minAccuracy * 10)
+                ],
+                overlayDelay: 0.1,
+                clock: clock
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(0.2))
+
+            #expect(sut.warningPopups.contains(makeWiFiWarningPopup()))
+            #expect(sut.warningPopups.contains(makeInaccurateLocationWarningPopup()))
+        }
+        
+        @Test func whenNotStarted_thenWiFiWarningIsNotDisplayed() async throws {
+            let sut = makeSUT(updates: [
+                makeNetworkTypeUpdate   (at: 0, type: .wifi),
+                makeLocationUpdate      (at: 2, lat: 1.0, lon: 1.0)
+            ])
+            
+            // Not started yet
+            #expect(!sut.warningPopups.contains(makeWiFiWarningPopup()))
+        }
+        
+        @Test func whenStartedOnWiFi_thenWarningAppearsImmediately() async throws {
+            let sut = makeSUT(updates: [
+                makeNetworkTypeUpdate(at: 0, type: .wifi)
+            ])
+            
+            await sut.startTest()
+            
+            #expect(sut.warningPopups.contains(makeWiFiWarningPopup()))
+        }
+        
+        @Test func whenMultipleNetworkSwitches_thenWarningTogglesCorrectly() async throws {
+            let sut = makeSUT(updates: [
+                makeLocationUpdate      (at: 0, lat: 1.0, lon: 1.0),
+                makeNetworkTypeUpdate   (at: 1, type: .cellular),
+                makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                makeNetworkTypeUpdate   (at: 3, type: .cellular),
+                makeNetworkTypeUpdate   (at: 4, type: .wifi),
+                makeLocationUpdate      (at: 5, lat: 2.0, lon: 2.0)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.warningPopups.contains(makeWiFiWarningPopup()))
+            // Fences exist in memory but both dirty — hidden from map
+            #expect(sut.fences.count == 2)
+            #expect(sut.fenceItems.isEmpty, "Dirty fences hidden from map")
+        }
+
+        @Test func whenStayingOnWiFiBeyondInaccuracyTimeout_thenStillAutoStop() async throws {
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let timeout: TimeInterval = 30 * 60
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeNetworkTypeUpdate   (at: 0, type: .wifi),
+                    makeLocationUpdate      (at: 0, lat: 1.0, lon: 1.0, accuracy: minAccuracy * 2)
+                ],
+                overlayDelay: 0.0,
+                clock: clock,
+                insufficientAccuracyAutoStopInterval: timeout
+            )
+
+            await sut.startTest()
+            await clock.advance(by: .seconds(timeout))
+
+            #expect(!sut.isStarted)
+            #expect(sut.stopTestReasons == [.insufficientLocationAccuracy(duration: timeout)])
+        }
+
+        @Test func whenNetworkConnectionIsUnknown_thenBehavesAsCellular() async throws {
+            // Since we only have wifi/cellular enum, this tests the default behavior
+            let sut = makeSUT(updates: [
+                makeLocationUpdate  (at: 0, lat: 1.0, lon: 1.0),
+                makePingUpdate      (at: 1, ms: 50)
+            ])
+            
+            await sut.startTest()
+            
+            #expect(!sut.warningPopups.contains(makeWiFiWarningPopup()))
+            #expect(sut.fenceItems.count == 1)
+        }
+
+        // MARK: - Initial WiFi State Tests
+
+        @Test func whenStartedWhileOnWiFi_thenWarningShownAndFencesCreatedAsDirty() async throws {
+            let provider = StubCurrentNetworkTypeProvider(type: .wifi)
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makePingUpdate          (at: 2, ms: 9),
+                    makeLocationUpdate      (at: 3, lat: 2.0, lon: 2.0)
+                ],
+                networkTypeProvider: provider
+            )
+
+            await sut.startTest()
+
+            #expect(sut.warningPopups.contains(makeWiFiWarningPopup()),
+                    "WiFi warning should be shown immediately on start")
+            // Fences exist in memory but all dirty — hidden from map
+            #expect(sut.fences.count == 2)
+            #expect(sut.fenceItems.isEmpty, "Dirty fences hidden from map")
+        }
+
+        // MARK: - Network Polling Tests
+
+        @Test func whenPollingDetectsWiFiOnLocationUpdate_thenWarningShownAndFencesCreatedAsDirty() async throws {
+            // Polling detects WiFi before location processing, fences continue but are dirty
+            let provider = StubCurrentNetworkTypeProvider(type: .wifi)
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makePingUpdate          (at: 2, ms: 50),
+                    makeLocationUpdate      (at: 3, lat: 2.0, lon: 2.0)
+                ],
+                networkTypeProvider: provider
+            )
+
+            await sut.startTest()
+
+            #expect(sut.warningPopups.contains(makeWiFiWarningPopup()),
+                    "Polling should trigger WiFi warning")
+            // Fences are created but dirty (polling detected WiFi on first location)
+            #expect(sut.fences.count == 2)
+        }
+
+        @Test func whenPollingDetectsCellularAfterWiFi_thenNewCleanFenceCreatedAfterDirtyOne() async throws {
+            // WiFi detected via async callback, then polling returns cellular on next location
+            let provider = StubCurrentNetworkTypeProvider(type: .cellular)
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                    // Polling returns cellular on next location, dismissing WiFi warning
+                    makeLocationUpdate      (at: 3, lat: 2.0, lon: 2.0),
+                    makePingUpdate          (at: 4, ms: 100)
+                ],
+                networkTypeProvider: provider
+            )
+
+            await sut.startTest()
+
+            #expect(!sut.warningPopups.contains(makeWiFiWarningPopup()),
+                    "Polling should dismiss WiFi warning")
+            // Fence at 1.0 (dirty, network change during its life) + fence at 2.0 (clean, polling restored cellular)
+            #expect(sut.fences.count == 2)
+        }
+
+        // MARK: - WiFi + Fence Behavior Tests
+
+        @Test func whenSwitchedToWiFiWithoutReinit_thenFencesContinueAsDirty() async throws {
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makePingUpdate          (at: 2, ms: 50),
+                makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                makePingUpdate          (at: 4, ms: 9),
+                makeLocationUpdate      (at: 5, lat: 2.0, lon: 2.0)
+            ])
+
+            await sut.startTest()
+
+            // Fence at 1.0 (dirty, closed) + fence at 2.0 (dirty, on WiFi)
+            #expect(sut.fences.count == 2)
+            #expect(sut.fences[0].dateExited != nil, "First fence closed when user moved")
+            #expect(sut.fences[0].pings.count == 1, "Only the cellular ping recorded")
+            #expect(sut.warningPopups.contains(makeWiFiWarningPopup()))
+        }
+    }
+
+    @MainActor @Suite("Dirty Fences")
+    struct DirtyFencesTests {
+        @Test func whenNetworkChangesToWiFi_thenActiveFenceMarkedDirtyAndNotPersisted() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makePingUpdate          (at: 2, ms: 50),
+                    makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                    makeLocationUpdate      (at: 4, lat: 2.0, lon: 2.0)
+                ],
+                persistenceService: persistenceService
+            )
+
+            await sut.startTest()
+
+            #expect(sut.fences.count == 2)
+            let savedFences = await persistenceService.capturedSavedFences
+            #expect(savedFences.isEmpty, "Dirty fences should not be persisted")
+        }
+
+        @Test func whenNetworkChangesToWiFiAndBack_thenDirtyFenceNotSentOnStop() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                    makeNetworkTypeUpdate   (at: 3, type: .cellular),
+                    makeLocationUpdate      (at: 4, lat: 2.0, lon: 2.0),
+                    makeLocationUpdate      (at: 5, lat: 3.0, lon: 3.0)
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            await sut.stopTest()
+
+            // fence(1.0) dirty, fence(2.0) clean (created after cellular returned), fence(3.0) clean
+            let sentFences = sendService.capturedSentFences.flatMap { $0 }
+            #expect(sentFences.count == 2, "Both fences created after cellular returns should be sent")
+            let sentLats = sentFences.map { $0.startingLocation.coordinate.latitude }
+            #expect(sentLats == [2.0, 3.0])
+        }
+
+        @Test func whenFenceCreatedOnWiFi_thenBornDirty() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeNetworkTypeUpdate   (at: 0, type: .wifi),
+                    makeSessionInitializedUpdate(at: 1, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 2, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate      (at: 3, lat: 2.0, lon: 2.0)
+                ],
+                persistenceService: persistenceService
+            )
+
+            await sut.startTest()
+
+            #expect(sut.fences.count == 2)
+            let savedFences = await persistenceService.capturedSavedFences
+            #expect(savedFences.isEmpty, "Fences born on WiFi should not be persisted")
+        }
+
+        @Test func whenRapidWiFiFluctuation_thenAffectedFenceStaysDirty() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makePingUpdate          (at: 2, ms: 50),
+                    makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                    makeNetworkTypeUpdate   (at: 4, type: .cellular),
+                    makeNetworkTypeUpdate   (at: 5, type: .wifi),
+                    makeNetworkTypeUpdate   (at: 6, type: .cellular),
+                    // New fence after all the toggling
+                    makeLocationUpdate      (at: 7, lat: 2.0, lon: 2.0),
+                    makeLocationUpdate      (at: 8, lat: 3.0, lon: 3.0)
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            await sut.stopTest()
+
+            // fence(1.0) dirty (experienced network changes), fence(2.0) clean (created after cellular), fence(3.0) clean
+            let sentFences = sendService.capturedSentFences.flatMap { $0 }
+            let sentLats = sentFences.map { $0.startingLocation.coordinate.latitude }
+            #expect(sentLats == [2.0, 3.0], "Only fences created after toggling ended should be sent")
+        }
+
+        @Test func whenStopWithAllDirtyFences_thenNothingSentToService() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                    makeLocationUpdate      (at: 3, lat: 2.0, lon: 2.0)
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            await sut.stopTest()
+
+            #expect(sendService.capturedSentFences.isEmpty, "All fences are dirty — nothing sent")
+        }
+
+        @Test func whenStopWithMixOfCleanAndDirtyFences_thenOnlyCleanFencesSent() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate      (at: 2, lat: 2.0, lon: 2.0),
+                    makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                    makeLocationUpdate      (at: 4, lat: 3.0, lon: 3.0),
+                    makeNetworkTypeUpdate   (at: 5, type: .cellular),
+                    makeLocationUpdate      (at: 6, lat: 4.0, lon: 4.0),
+                    makeLocationUpdate      (at: 7, lat: 5.0, lon: 5.0)
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            await sut.stopTest()
+
+            // fence(1.0) clean, fence(2.0) dirty, fence(3.0) dirty, fence(4.0) clean, fence(5.0) clean
+            let sentFences = sendService.capturedSentFences.flatMap { $0 }
+            let sentLats = sentFences.map { $0.startingLocation.coordinate.latitude }
+            #expect(sentLats == [1.0, 4.0, 5.0], "Only fences unaffected by network changes should be sent")
+        }
+
+        @Test func whenDirtyFenceClosedOnReinit_thenNotPersisted() async throws {
+            let persistenceService = FencePersistenceServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                    makeSessionInitializedUpdate(at: 3, sessionID: "uuid-2"),
+                    makeNetworkTypeUpdate   (at: 4, type: .cellular),
+                    makeLocationUpdate      (at: 5, lat: 2.0, lon: 2.0)
+                ],
+                persistenceService: persistenceService
+            )
+
+            await sut.startTest()
+
+            let savedFences = await persistenceService.capturedSavedFences
+            // The dirty fence closed at reinit should NOT be persisted
+            #expect(savedFences.isEmpty, "Dirty fence should not be persisted even when closed at reinit")
+        }
+
+        @Test func whenPingArrivesWhileOnWiFi_thenPingBlockedByWiFiGuard() async throws {
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: "uuid-1"),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                makePingUpdate          (at: 3, ms: 999)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.fences[0].pings.isEmpty, "Pings should be blocked on WiFi")
+        }
+    }
+
+    // MARK: - Session Reinitialization Fence Handoff Tests
+
+    @MainActor @Suite("Session Reinitialization Fence Handoff")
+    struct SessionReinitializationFenceHandoffTests {
+        @Test func whenSessionReinitialized_thenActiveFenceStaysOnPreviousSession() async throws {
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                makeSessionInitializedUpdate(at: 2, sessionID: uuid2),
+                makeLocationUpdate(at: 3, lat: 2.0, lon: 2.0)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.fences.count == 2)
+            #expect(sut.fences[0].sessionUUID == uuid1, "First fence should stay on previous session")
+            #expect(sut.fences[0].dateExited != nil, "First fence should be closed at reinit")
+            #expect(sut.fences[1].sessionUUID == uuid2)
+        }
+
+        @Test func whenSessionReinitialized_thenClosedFenceIsPersistedOnPreviousSession() async throws {
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let persistenceService = FencePersistenceServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                    makeSessionInitializedUpdate(at: 2, sessionID: uuid2)
+                ],
+                persistenceService: persistenceService
+            )
+
+            await sut.startTest()
+
+            let savedFences = await persistenceService.capturedSavedFences
+            let fenceSavedBeforeReinit = savedFences.first { $0.sessionUUID == uuid1 }
+            #expect(fenceSavedBeforeReinit != nil, "Fence should be persisted on previous session")
+            #expect(fenceSavedBeforeReinit?.dateExited != nil, "Persisted fence should be closed")
+        }
+
+        @Test func whenSessionReinitialized_thenExactlyOneOldFenceIsPersistedAndExactlyOneNewUUIDIsAnchored() async throws {
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let persistenceService = FencePersistenceServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                    makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                    makePingUpdate(at: 2, ms: 50),
+                    // A ping-session recovery reaches the view model as exactly this event.
+                    makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+                    makeLocationUpdate(at: 4, lat: 2.0, lon: 2.0),
+                    makePingUpdate(at: 5, ms: 60)
+                ],
+                persistenceService: persistenceService
+            )
+
+            await sut.startTest()
+
+            // Exactly one fence is persisted for the previous session and exactly one anchor is written for the new
+            // one, and — the part that actually matters — the save happens *before* the anchor. `save()` writes to
+            // the latest unfinished persisted session, which is still the old one until `assign` runs, so the
+            // opposite order would file the previous session's fence under the new session.
+            let messages = await persistenceService.capturedMessages
+            let saveIndices = messages.indices.filter {
+                if case .save(let fence) = messages[$0] { return fence.sessionUUID == uuid1 }
+                return false
+            }
+            let anchorIndices = messages.indices.filter {
+                if case .assign(let testUUID, _) = messages[$0] { return testUUID == uuid2 }
+                return false
+            }
+
+            #expect(saveIndices.count == 1)
+            #expect(anchorIndices.count == 1)
+
+            let saveIndex = try #require(saveIndices.first)
+            let anchorIndex = try #require(anchorIndices.first)
+            #expect(saveIndex < anchorIndex, "The previous session's fence must be persisted before the new anchor")
+
+            // The fence must be closed at the moment of the recovery, not later when the next location arrives.
+            guard case .save(let persistedFence) = messages[saveIndex] else {
+                Issue.record("Expected the previous session's fence to have been persisted")
+                return
+            }
+            #expect(persistedFence.dateExited == makeDate(offset: 3))
+        }
+
+        @Test func whenRapidSessionReinits_thenEachFenceStaysOnItsOriginalSession() async throws {
+            let uuid1 = "uuid-1"
+            let uuid2 = "uuid-2"
+            let uuid3 = "uuid-3"
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: uuid1),
+                makeLocationUpdate(at: 1, lat: 1.0, lon: 1.0),
+                makeLocationUpdate(at: 2, lat: 2.0, lon: 2.0),
+                makeSessionInitializedUpdate(at: 3, sessionID: uuid2),
+                makeLocationUpdate(at: 4, lat: 3.0, lon: 3.0),
+                makeSessionInitializedUpdate(at: 5, sessionID: uuid3),
+                makeLocationUpdate(at: 6, lat: 4.0, lon: 4.0)
+            ])
+
+            await sut.startTest()
+
+            #expect(sut.fences.map(\.sessionUUID) == [uuid1, uuid1, uuid2, uuid3])
+        }
+    }
+
+    // MARK: - WiFi + RE01 Combined Tests
+
+    @MainActor @Suite("WiFi and Session Reinitialization Combined")
+    struct WiFiAndSessionReinitCombinedTests {
+        @Test func whenWiFiDetectedThenSessionReinitialized_thenFenceClosedAndNewDirtyFenceCreated() async throws {
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: "uuid-cell"),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makePingUpdate          (at: 2, ms: 40),
+                makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                makePingUpdate          (at: 4, ms: 9),
+                makeSessionInitializedUpdate(at: 5, sessionID: "uuid-wifi"),
+                makeLocationUpdate      (at: 6, lat: 2.0, lon: 2.0)
+            ])
+
+            await sut.startTest()
+
+            // Fence at 1.0 (dirty, WiFi during its life) + fence at 2.0 (dirty, born on WiFi)
+            #expect(sut.fences.count == 2)
+            #expect(sut.fences[0].sessionUUID == "uuid-cell")
+            #expect(sut.fences[0].dateExited != nil, "First fence closed at reinit")
+            #expect(sut.fences[0].pings.count == 1, "Only the cellular ping recorded")
+            #expect(sut.fences[1].sessionUUID == "uuid-wifi")
+        }
+
+        @Test func whenSessionReinitializedThenWiFiDetected_thenPreWiFiFenceCleanAndWiFiFencesDirty() async throws {
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: "uuid-cell"),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makePingUpdate          (at: 2, ms: 40),
+                makeSessionInitializedUpdate(at: 3, sessionID: "uuid-wifi"),
+                makeLocationUpdate      (at: 4, lat: 2.0, lon: 2.0),
+                makePingUpdate          (at: 5, ms: 9),
+                makeNetworkTypeUpdate   (at: 6, type: .wifi),
+                makeLocationUpdate      (at: 7, lat: 3.0, lon: 3.0),
+                makePingUpdate          (at: 8, ms: 8)
+            ])
+
+            await sut.startTest()
+
+            // fence(1.0, uuid-cell, closed at reinit) + fence(2.0, uuid-wifi, dirty) + fence(3.0, uuid-wifi, dirty)
+            #expect(sut.fences.count == 3)
+            #expect(sut.fences[0].sessionUUID == "uuid-cell", "First fence on cellular session")
+            #expect(sut.fences[0].dateExited != nil)
+            #expect(sut.fences[1].sessionUUID == "uuid-wifi", "Second fence created after reinit")
+            #expect(sut.fences[1].pings.count == 1, "One ping before WiFi detected")
+        }
+
+        @Test func whenCellularReturnsBeforeReinit_thenNewFenceOnRestoredCellularIsClean() async throws {
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: "uuid-cell-1"),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makeNetworkTypeUpdate   (at: 2, type: .wifi),
+                makeSessionInitializedUpdate(at: 3, sessionID: "uuid-wifi"),
+                makeNetworkTypeUpdate   (at: 4, type: .cellular),
+                makeLocationUpdate      (at: 5, lat: 2.0, lon: 2.0),
+                makePingUpdate          (at: 6, ms: 100),
+                makeSessionInitializedUpdate(at: 7, sessionID: "uuid-cell-2"),
+                makeLocationUpdate      (at: 8, lat: 3.0, lon: 3.0)
+            ])
+
+            await sut.startTest()
+
+            // fence(1.0, uuid-cell-1, dirty) + fence(2.0, uuid-wifi, clean) + fence(3.0, uuid-cell-2, clean)
+            #expect(sut.fences.count == 3)
+            #expect(sut.fences[0].sessionUUID == "uuid-cell-1", "First fence on original session")
+            #expect(sut.fences[0].dateExited != nil)
+            #expect(sut.fences[1].sessionUUID == "uuid-wifi", "Second fence after cellular restored")
+            #expect(sut.fences[2].sessionUUID == "uuid-cell-2", "Third fence on new cellular session")
+        }
+
+        @Test func whenCellularToWiFiToCellular_thenDirtyFenceFollowedByCleanFence() async throws {
+            let sut = makeSUT(updates: [
+                makeSessionInitializedUpdate(at: 0, sessionID: "uuid-cell-1"),
+                makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                makePingUpdate          (at: 2, ms: 40),
+                makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                makeSessionInitializedUpdate(at: 4, sessionID: "uuid-wifi"),
+                makeNetworkTypeUpdate   (at: 5, type: .cellular),
+                makeSessionInitializedUpdate(at: 6, sessionID: "uuid-cell-2"),
+                makeLocationUpdate      (at: 7, lat: 2.0, lon: 2.0),
+                makePingUpdate          (at: 8, ms: 50)
+            ])
+
+            await sut.startTest()
+
+            // fence(1.0, uuid-cell-1, dirty) closed at reinit(uuid-wifi)
+            // No fence created between reinits (no location)
+            // fence(2.0, uuid-cell-2, clean)
+            #expect(sut.fences.count == 2)
+            #expect(sut.fences[0].sessionUUID == "uuid-cell-1")
+            #expect(sut.fences[0].dateExited != nil, "First fence closed")
+            #expect(sut.fences[1].sessionUUID == "uuid-cell-2")
+        }
+
+        @Test func whenStoppedWhileOnWiFiAfterReinit_thenOnlyCleanFencesSent() async throws {
+            let sendService = SendCoverageResultsServiceSpy()
+            let sut = makeSUT(
+                updates: [
+                    makeSessionInitializedUpdate(at: 0, sessionID: "uuid-cell"),
+                    makeLocationUpdate      (at: 1, lat: 1.0, lon: 1.0),
+                    makeLocationUpdate      (at: 2, lat: 2.0, lon: 2.0),
+                    makeNetworkTypeUpdate   (at: 3, type: .wifi),
+                    makeSessionInitializedUpdate(at: 4, sessionID: "uuid-wifi")
+                ],
+                sendResultsService: sendService
+            )
+
+            await sut.startTest()
+            await sut.stopTest()
+
+            // fence(1.0) closed before WiFi → clean. fence(2.0) active when WiFi hit → dirty.
+            let sentFences = sendService.capturedSentFences.flatMap { $0 }
+            #expect(sentFences.count == 1, "Only the clean fence before WiFi should be sent")
+            #expect(sentFences.first?.startingLocation.coordinate.latitude == 1.0)
+        }
+    }
+}
+
+@MainActor func makeSUT(
+    fences: [Fence] = [],
+    refreshInterval: TimeInterval = 1,
+    minimumLocationAccuracy: CLLocationDistance = 100,
+    updates: [NetworkCoverageViewModel.Update] = [],
+    locale: Locale = Locale(identifier: "en_US"),
+    persistenceService: FencePersistenceServiceSpy = .init(),
+    sendResultsService: SendCoverageResultsServiceSpy = .init(),
+    currentTime: @escaping () -> Date = Date.init,
+    overlayDelay: TimeInterval = 3.0,
+    clock: some Clock<Duration> = ContinuousClock(),
+    insufficientAccuracyAutoStopInterval: TimeInterval = 30 * 60,
+    maxTestDuration: @escaping () -> TimeInterval = { 4 * 60 * 60 },
+    networkTypeProvider: (any CurrentNetworkTypeProvider)? = nil,
+    renderingConfiguration: FencesRenderingConfiguration = .default
+) -> NetworkCoverageViewModel {
+    .init(
+        fences: fences,
+        refreshInterval: refreshInterval,
+        minimumLocationAccuracy: minimumLocationAccuracy,
+        locationInaccuracyWarningInitialDelay: overlayDelay,
+        insufficientAccuracyAutoStopInterval: insufficientAccuracyAutoStopInterval,
+        updates: { updates.publisher.values },
+        currentRadioTechnology: RadioTechnologyServiceStub(),
+        sendResultsService: sendResultsService,
+        persistenceService: persistenceService,
+        locale: locale,
+        timeNow: currentTime,
+        clock: clock,
+        maxTestDuration: maxTestDuration,
+        networkTypeProvider: networkTypeProvider,
+        renderingConfiguration: renderingConfiguration
+    )
+}
+
+private func expectFenceItems(
+    _ items: [FenceItem],
+    match fences: [Fence],
+    sourceLocation location: SourceLocation = #_sourceLocation
+) {
+    let sortedItems = items.sorted { $0.id.uuidString < $1.id.uuidString }
+    let sortedFences = fences.sorted { $0.id.uuidString < $1.id.uuidString }
+
+    #expect(sortedItems.count == sortedFences.count, sourceLocation: location)
+
+    for (item, fence) in zip(sortedItems, sortedFences) {
+        #expect(item.id == fence.id, sourceLocation: location)
+        #expect(item.coordinate.latitude == fence.startingLocation.coordinate.latitude, sourceLocation: location)
+        #expect(item.coordinate.longitude == fence.startingLocation.coordinate.longitude, sourceLocation: location)
+        let expectedTechnology = fence.significantTechnology.map { $0.radioTechnologyDisplayValue ?? $0 } ?? "N/A"
+        #expect(item.technology == expectedTechnology, sourceLocation: location)
+    }
+}
+
+func makeLocationUpdate(
+    at timestampOffset: TimeInterval,
+    lat: CLLocationDegrees,
+    lon: CLLocationDegrees,
+    accuracy: CLLocationAccuracy = 1,
+    speed: CLLocationSpeed = 0
+) -> NetworkCoverageViewModel.Update {
+    let timestamp = makeDate(offset: timestampOffset)
+    return .location(
+        LocationUpdate(
+            location: .init(
+                coordinate: .init(latitude: lat, longitude: lon),
+                altitude: 0,
+                horizontalAccuracy: accuracy,
+                verticalAccuracy: 1,
+                course: 0,
+                speed: speed,
+                timestamp: timestamp
+            ) ,
+            timestamp: timestamp
+        )
+    )
+}
+
+func makePingUpdate(at timestampOffset: TimeInterval, ms: some BinaryInteger) -> NetworkCoverageViewModel.Update {
+    .ping(.init(result: .interval(.milliseconds(ms)), timestamp: makeDate(offset: timestampOffset)))
+}
+
+func makeNetworkTypeUpdate(
+    at timestampOffset: TimeInterval,
+    type: NetworkTypeUpdate.NetworkConnectionType
+) -> NetworkCoverageViewModel.Update {
+    .networkType(.init(type: type, timestamp: makeDate(offset: timestampOffset)))
+}
+
+func makeSessionInitializedUpdate(
+    at timestampOffset: TimeInterval,
+    sessionID: String
+) -> NetworkCoverageViewModel.Update {
+    .sessionInitialized(.init(timestamp: makeDate(offset: timestampOffset), sessionID: sessionID))
+}
+
+
+func makeSaveError() -> Error {
+    NSError(domain: "test", code: 1, userInfo: nil)
+}
+
+func makeDate(offset: TimeInterval) -> Date {
+    Date(timeIntervalSinceReferenceDate: offset)
+}
+
+func makeInaccurateLocationWarningPopup() -> NetworkCoverageViewModel.WarningPopupItem {
+    .init(
+        title: "Waiting for GPS",
+        description: "Currently the location accuracy is insufficient. Please measure outdoors."
+    )
+}
+
+func makeWiFiWarningPopup() -> NetworkCoverageViewModel.WarningPopupItem {
+    .init(
+        title: "Disable Wi‑Fi",
+        description: "Please turn off Wi‑Fi to measure cellular coverage."
+    )
+}
+
+@MainActor extension NetworkCoverageViewModel {
+    func startTest() async {
+        await toggleMeasurement()
+    }
+
+    func simulateSelectFence(_ fence: Fence) {
+        selectedFenceItem = fenceItems.first { $0.id == fence.id }
+    }
+}
+
+final class SendCoverageResultsServiceSpy: SendCoverageResultsService {
+    private(set) var capturedSentFences: [[Fence]] = []
+    private let sendResult: Result<Void, Error>
+
+    init(sendResult: Result<Void, Error> = .success(())) {
+        self.sendResult = sendResult
+    }
+
+    func send(fences: [Fence]) async throws {
+        capturedSentFences.append(fences)
+        switch sendResult {
+        case .success:
+            return
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+extension AsyncThrowingPublisher: @retroactive AsynchronousSequence {}
+
+final class RadioTechnologyServiceStub: CurrentRadioTechnologyService {
+    func technologyCode() -> String? {
+        nil
+    }
+}
+
+final class StubCurrentNetworkTypeProvider: CurrentNetworkTypeProvider, @unchecked Sendable {
+    var type: NetworkTypeUpdate.NetworkConnectionType?
+
+    init(type: NetworkTypeUpdate.NetworkConnectionType?) {
+        self.type = type
+    }
+
+    func currentNetworkType() -> NetworkTypeUpdate.NetworkConnectionType? {
+        type
+    }
+}
+
+final actor FencePersistenceServiceSpy: FencePersistenceService {
+    enum CapturedMessage: Equatable {
+        case save(fence: Fence)
+        case sessionStarted(date: Date)
+        case sessionFinalized(date: Date)
+        case assign(testUUID: String, anchorDate: Date)
+        case finalizeCurrentSession(date: Date)
+        case deleteFinalizedNilUUIDSessions
+    }
+
+    private(set) var capturedSavedFences: [Fence] = []
+
+    private(set) var capturedMessages: [CapturedMessage] = []
+
+    func save(_ fence: Fence) throws {
+        capturedSavedFences.append(fence)
+        capturedMessages.append(.save(fence: fence))
+    }
+
+    func sessionStarted(at date: Date) throws {
+        capturedMessages.append(.sessionStarted(date: date))
+    }
+
+    func sessionFinalized(at date: Date) throws {
+        capturedMessages.append(.sessionFinalized(date: date))
+    }
+
+    func assignTestUUIDAndAnchor(_ uuid: String, anchorNow: Date) throws {
+        capturedMessages.append(.assign(testUUID: uuid, anchorDate: anchorNow))
+    }
+
+    func finalizeCurrentSession(at date: Date) throws {
+        capturedMessages.append(.finalizeCurrentSession(date: date))
+    }
+
+    func deleteFinalizedNilUUIDSessions() throws {
+        capturedMessages.append(.deleteFinalizedNilUUIDSessions)
+    }
+}
+
+private extension Fence {
+    func withoutSessionUUID() -> Self {
+        var newFence = self
+        newFence.sessionUUID = nil
+        return newFence
+    }
+}
+
+// MARK: - SwiftTesting Debug Support
+
+extension FenceItem: @retroactive CustomTestStringConvertible, @retroactive CustomDebugStringConvertible {
+    public var debugDescription: String { testDescription }
+
+    public var testDescription: String {
+        let idPrefix = String(id.uuidString.prefix(6))
+        let selectedStatus = isSelected ? "selected" : ""
+        let currentStatus = isCurrent ? "current" : ""
+
+        let statuses = [selectedStatus, currentStatus].filter { !$0.isEmpty }
+        let statusString = statuses.isEmpty ? "" : " [\(statuses.joined(separator: ", "))]"
+
+        return "FenceItem(\(idPrefix), \(coordinate.latitude),\(coordinate.longitude)\(statusString))"
+    }
+}
+
+extension FenceDetail: @retroactive CustomTestStringConvertible, @retroactive CustomDebugStringConvertible {
+    public var debugDescription: String { testDescription }
+
+    public var testDescription: String {
+        let idPrefix = String(id.uuidString.prefix(6))
+        return "FenceDetail(\(idPrefix), \(technology), \(averagePing))"
+    }
+}
+
+extension FencePersistenceServiceSpy.CapturedMessage: @retroactive CustomTestStringConvertible, @retroactive CustomDebugStringConvertible {
+    public var debugDescription: String { testDescription }
+
+    public var testDescription: String {
+        switch self {
+
+        case .save(fence: let fence):
+            ".save(fence: \(fence))"
+        case .sessionStarted(date: let date):
+            ".sessionStarted(date: \(date))"
+        case .sessionFinalized(date: let date):
+            ".sessionFinalized(date: let \(date))"
+        case .assign(testUUID: let testUUID, anchorDate: let anchorDate):
+            ".assign(testUUID: \(testUUID), anchorDate: \(anchorDate))"
+        case .finalizeCurrentSession(date: let date):
+            ".finalizeCurrentSession(date: \(date))"
+        case .deleteFinalizedNilUUIDSessions:
+            ".deleteFinalizedNilUUIDSessions"
+        }
+    }
+}

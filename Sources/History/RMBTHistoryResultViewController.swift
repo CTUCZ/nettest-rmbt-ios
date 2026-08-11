@@ -22,6 +22,7 @@ final class RMBTHistoryResultViewController: UIViewController {
         case netInfo
         case qos
         case testDetails
+        case exportButtons
     }
     
     @IBOutlet private weak var tableView: UITableView!
@@ -49,7 +50,8 @@ final class RMBTHistoryResultViewController: UIViewController {
         self.tableView.register(UINib(nibName: RMBTNetInfoListCell.ID, bundle: nil), forCellReuseIdentifier: RMBTNetInfoListCell.ID)
         self.tableView.register(UINib(nibName: RMBTQOSListCell.ID, bundle: nil), forCellReuseIdentifier: RMBTQOSListCell.ID)
         self.tableView.register(UINib(nibName: RMBTTestDetailTitleCell.ID, bundle: nil), forCellReuseIdentifier: RMBTTestDetailTitleCell.ID)
-        
+        self.tableView.register(UINib(nibName: RMBTTestExportCell.ID, bundle: nil), forCellReuseIdentifier: RMBTTestExportCell.ID)
+
         self.tableView.contentInset = UIEdgeInsets(top: 20, left: 0, bottom: 10, right: 0)
         
         self.fetchHistoryResultInformation()
@@ -110,7 +112,12 @@ final class RMBTHistoryResultViewController: UIViewController {
         if historyResult.fullDetailsItems?.count ?? 0 > 0 {
             sections.append(.testDetails)
         }
-        
+
+        if historyResult.openTestUuid != nil {
+            sections.append(.title(NSLocalizedString("Export data", comment: "")))
+            sections.append(.exportButtons)
+        }
+
         self.sections = sections
         self.tableView.reloadData()
     }
@@ -213,6 +220,7 @@ final class RMBTHistoryResultViewController: UIViewController {
         else { return }
         let mapController = navController.topViewController as? RMBTMapViewController
         mapController?.initialLocation = CLLocation(latitude: result.coordinate.latitude, longitude: result.coordinate.longitude)
+        mapController?.initialNetworkType = result.networkTypeServerDescription
 //        mapController?.initialZoom = zoom
         self.present(navController, animated: true, completion: nil)
     }
@@ -261,6 +269,8 @@ extension RMBTHistoryResultViewController: UITableViewDelegate, UITableViewDataS
             return CGFloat((historyResult?.qosResults?.count ?? 0) * 48)
         case .testDetails:
             return 48
+        case .exportButtons:
+            return 48
         }
     }
     
@@ -272,6 +282,7 @@ extension RMBTHistoryResultViewController: UITableViewDelegate, UITableViewDataS
         switch section {
         case .map:
             let mapCell = tableView.dequeueReusableCell(withIdentifier: RMBTHistoryMapCell.ID, for: indexPath) as! RMBTHistoryMapCell
+            mapCell.networkType = historyResult.networkTypeServerDescription
             mapCell.coordinate = historyResult.coordinate
             mapCell.selectionStyle = .none
             mapCell.onFullScreenHandler = { [weak self] zoom in
@@ -280,20 +291,18 @@ extension RMBTHistoryResultViewController: UITableViewDelegate, UITableViewDataS
             return mapCell
         case .network:
             let networkCell = tableView.dequeueReusableCell(withIdentifier: RMBTHistoryNetworkCell.ID, for: indexPath) as! RMBTHistoryNetworkCell
-            networkCell.networkName = historyResult.netItems.first(where: { item in
-                item.title == "WLAN SSID" || item.title == NSLocalizedString("history.result.operator", comment: "");
-            })?.value
+            networkCell.networkName = historyResult.wlanSSID
             networkCell.networkType = historyResult.networkTypeServerDescription
             networkCell.selectionStyle = .none
             return networkCell
         case .basicInfo:
             let networkCell = tableView.dequeueReusableCell(withIdentifier: RMBTHistoryBasicInfoCell.ID, for: indexPath) as! RMBTHistoryBasicInfoCell
             networkCell.pingValue = historyResult.shortestPingMillisString
-            networkCell.pingIcon.tintColor = .byResultClass(historyResult.pingClass)
+            networkCell.pingIcon.image = .pingIconByResultClass(historyResult.pingClass)
             networkCell.downloadValue = historyResult.downloadSpeedMbpsString
-            networkCell.downIcon.tintColor = .byResultClass(historyResult.downloadSpeedClass)
+            networkCell.downIcon.image = .downloadIconByResultClass(historyResult.downloadSpeedClass)
             networkCell.uploadValue = historyResult.uploadSpeedMbpsString
-            networkCell.upIcon.tintColor = .byResultClass(historyResult.uploadSpeedClass)
+            networkCell.upIcon.image = .uploadIconByResultClass(historyResult.uploadSpeedClass)
             networkCell.signalValue = historyResult.signal?.stringValue
             networkCell.signalIcon.tintColor = .byResultClass(historyResult.signalClass)
             networkCell.selectionStyle = .none
@@ -342,6 +351,37 @@ extension RMBTHistoryResultViewController: UITableViewDelegate, UITableViewDataS
             let cell = tableView.dequeueReusableCell(withIdentifier: RMBTTestDetailTitleCell.ID, for: indexPath)
             cell.accessoryType = .disclosureIndicator
             return cell
+        case .exportButtons:
+            let cell = tableView.dequeueReusableCell(withIdentifier: RMBTTestExportCell.ID, for: indexPath) as! RMBTTestExportCell
+            if let testUUID = historyResult.openTestUuid {
+                cell.configure(
+                    with: [testUUID],
+                    onExportedPDFFile: { [weak self] in
+                        self?.openFile(url: $0, historyResult: historyResult, testUUID: testUUID, fileExtension: "pdf")
+                    },
+                    onExportedXLSXFile: { [weak self] in
+                        self?.openFile(url: $0, historyResult: historyResult, testUUID: testUUID, fileExtension: "xlsx")
+                    },
+                    onExportedCSVFile: { [weak self] in
+                        self?.openFile(url: $0, historyResult: historyResult, testUUID: testUUID, fileExtension: "csv")
+                    },
+                    onFailure: {
+                        if case let RMBTTestExportCell.Failure.exportError(error) = $0 {
+                            UIAlertController.presentAlert(
+                                title: NSLocalizedString("Export data", comment: ""),
+                                text: error.localizedDescription,
+                                cancelTitle: NSLocalizedString("Dismiss", comment: ""),
+                                cancelAction: { _ in
+                                     self.navigationController?.popViewController(animated: true)
+                                },
+                                otherAction: nil
+                            )
+                        }
+                    }
+                )
+            }
+            return cell
+
         }
     }
     
@@ -356,4 +396,20 @@ extension RMBTHistoryResultViewController: UITableViewDelegate, UITableViewDataS
         }
     }
    
+}
+
+private extension RMBTHistoryResultViewController {
+
+    func openFile(url: URL, historyResult: RMBTHistoryResult, testUUID: String, fileExtension: String) {
+        let pdfViewController = RMBTFilePreviewViewController()
+        let fileService = FilePreviewService()
+        if let fileURL = try? fileService.temporarilySave(
+            fileURL: url,
+            withName: (historyResult.timeStringIn24hFormat ?? testUUID) + "." + fileExtension
+        ) {
+            pdfViewController.configure(fileURLs: [fileURL])
+            navigationController?.present(pdfViewController, animated: true)
+        }
+    }
+
 }
