@@ -146,11 +146,10 @@ final class RMBTAppDelegate: UIResponder, UIApplicationDelegate {
         UISwitch.appearance().onTintColor = UIColor.primaryTint
 
         let tabBarController = window?.rootViewController as? UITabBarController
-        let tabBar = tabBarController?.tabBar
-        tabBar?.items?[0].title = NSLocalizedString("Home", comment: "")
-        tabBar?.items?[1].title = NSLocalizedString("History", comment: "")
-        tabBar?.items?[2].title = NSLocalizedString("Statistics", comment: "")
-        tabBar?.items?[3].title = NSLocalizedString("Map", comment: "")
+        let tabTitles = ["Home", "History", "Statistics", "Map"]
+        for (item, title) in zip(tabBarController?.tabBar.items ?? [], tabTitles) {
+            item.title = NSLocalizedString(title, comment: "")
+        }
     }
 }
 
