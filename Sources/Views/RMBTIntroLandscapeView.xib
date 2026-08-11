@@ -275,7 +275,7 @@
                         <constraint firstAttribute="bottom" secondItem="3zF-b1-XDT" secondAttribute="bottom" id="lrf-VS-UTF"/>
                     </constraints>
                 </view>
-                <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="RTR-Netztest" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="uFu-u4-PYC">
+                <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="ČTÚ-NetTest" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="uFu-u4-PYC">
                     <rect key="frame" x="358.5" y="25" width="119.5" height="21"/>
                     <constraints>
                         <constraint firstAttribute="height" constant="21" id="T55-yb-cnz"/>

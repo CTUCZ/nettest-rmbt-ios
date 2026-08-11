@@ -427,7 +427,7 @@ class RMBTIntroViewController: UIViewController {
             }
         }
 
-        currentView.locationTintColor = !RMBTLocationTracker.shared.isLocationDenied ? .ipAvailable : .ipNotAvailable
+        currentView.locationTintColor = !RMBTLocationTracker.shared.isLocationDenied ? .primaryTint : .ipNotAvailable
 
         if let type = self.connectivity?.networkTypeDescription,
            let technology = RMBTNetworkTypeConstants.cellularCodeDescriptionDictionary[type] {
