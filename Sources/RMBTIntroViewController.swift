@@ -662,3 +662,7 @@ private extension UIColor {
     static let ipAvailable = UIColor(red: 89.0 / 255.0, green: 178.0 / 255.0, blue: 0, alpha: 1.0)
     static let coverageUnavailable = UIColor.systemGray
 }
+
+extension UIColor {
+    static let primaryTint = UIColor(hex: "#2362a2")
+}
