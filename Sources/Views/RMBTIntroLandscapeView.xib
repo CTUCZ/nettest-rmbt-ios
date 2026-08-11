@@ -213,6 +213,14 @@
                         <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="icon_loop_mode" translatesAutoresizingMaskIntoConstraints="NO" id="bT2-kv-A94">
                             <rect key="frame" x="243" y="103.5" width="62" height="75"/>
                         </imageView>
+                        <button opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="YZd-SQ-vgk" customClass="ExtenedTapAreaButton" customModule="RMBT" customModuleProvider="target">
+                            <rect key="frame" x="305" y="119" width="75" height="44"/>
+                            <constraints>
+                                <constraint firstAttribute="height" constant="44" id="su8-32-qqv"/>
+                            </constraints>
+                            <state key="normal" title="Button"/>
+                            <buttonConfiguration key="configuration" style="plain" title="Button"/>
+                        </button>
                     </subviews>
                     <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
                     <constraints>
@@ -220,8 +228,10 @@
                         <constraint firstItem="LXa-8a-bNM" firstAttribute="centerY" secondItem="2u0-nO-9xw" secondAttribute="centerY" id="6IU-ZH-L9X"/>
                         <constraint firstItem="2u0-nO-9xw" firstAttribute="top" secondItem="pwN-Am-Qnq" secondAttribute="top" constant="20" id="7xG-Sa-kSq"/>
                         <constraint firstItem="OjE-aQ-oLZ" firstAttribute="centerY" secondItem="2u0-nO-9xw" secondAttribute="centerY" id="Erc-iN-mmj"/>
+                        <constraint firstAttribute="trailing" secondItem="YZd-SQ-vgk" secondAttribute="trailing" id="T7d-3U-jdZ"/>
+                        <constraint firstItem="YZd-SQ-vgk" firstAttribute="centerY" secondItem="pwN-Am-Qnq" secondAttribute="centerY" id="dVz-vI-Upg"/>
                         <constraint firstItem="OjE-aQ-oLZ" firstAttribute="centerX" secondItem="2u0-nO-9xw" secondAttribute="centerX" id="LU4-hK-8iW"/>
-                        <constraint firstItem="2u0-nO-9xw" firstAttribute="centerX" secondItem="pwN-Am-Qnq" secondAttribute="centerX" id="PAs-It-8Ut"/>
+                        <constraint firstItem="2u0-nO-9xw" firstAttribute="centerX" secondItem="pwN-Am-Qnq" secondAttribute="centerX" constant="-80" id="PAs-It-8Ut"/>
                         <constraint firstItem="ctX-c8-3cH" firstAttribute="centerX" secondItem="2u0-nO-9xw" secondAttribute="centerX" id="TbA-Yn-gn6"/>
                         <constraint firstItem="LXa-8a-bNM" firstAttribute="height" secondItem="pwN-Am-Qnq" secondAttribute="height" multiplier="0.5" id="aPz-ru-8mC"/>
                         <constraint firstItem="OjE-aQ-oLZ" firstAttribute="height" secondItem="pwN-Am-Qnq" secondAttribute="height" multiplier="0.16" id="c41-gV-DmK"/>
@@ -244,7 +254,7 @@
                         <action selector="settingsButtonClick:" destination="reI-lu-t8Q" eventType="touchUpInside" id="LeL-aJ-VrR"/>
                     </connections>
                 </button>
-                <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="wNJ-Ad-aae" userLabel="Loop Button Container View">
+                <view hidden="YES" contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="wNJ-Ad-aae" userLabel="Loop Button Container View">
                     <rect key="frame" x="82.5" y="16" width="100" height="46"/>
                     <subviews>
                         <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="loop_mode_switcher_bg" translatesAutoresizingMaskIntoConstraints="NO" id="Myb-hq-rhY">
@@ -308,7 +318,7 @@
                 <constraint firstItem="uFu-u4-PYC" firstAttribute="top" secondItem="5Xc-wd-VcA" secondAttribute="top" constant="25" id="Hd5-li-usH"/>
                 <constraint firstItem="5Xc-wd-VcA" firstAttribute="bottom" secondItem="aUD-Jr-ctT" secondAttribute="bottom" id="J1r-X6-Bf6"/>
                 <constraint firstItem="h0M-Kz-lBC" firstAttribute="top" secondItem="uFu-u4-PYC" secondAttribute="bottom" constant="8" id="MSQ-uM-HL7"/>
-                <constraint firstItem="pwN-Am-Qnq" firstAttribute="width" secondItem="reI-lu-t8Q" secondAttribute="width" multiplier="0.45" id="NBn-md-ja4"/>
+                <constraint firstItem="pwN-Am-Qnq" firstAttribute="width" secondItem="reI-lu-t8Q" secondAttribute="width" multiplier="0.55" id="NBn-md-ja4"/>
                 <constraint firstItem="4NO-me-PDl" firstAttribute="top" secondItem="5Xc-wd-VcA" secondAttribute="top" constant="15" id="PuF-Tv-9qa"/>
                 <constraint firstItem="ESc-IZ-OIN" firstAttribute="leading" secondItem="Scg-aO-ECo" secondAttribute="trailing" id="R8q-hw-BGs"/>
                 <constraint firstItem="wNJ-Ad-aae" firstAttribute="top" secondItem="5Xc-wd-VcA" secondAttribute="top" constant="16" id="TBz-Vz-0Vu"/>
@@ -344,6 +354,7 @@
                 <outlet property="networkWifiView" destination="OjE-aQ-oLZ" id="xaC-bd-jvz"/>
                 <outlet property="settingsButton" destination="4NO-me-PDl" id="iKr-76-aS6"/>
                 <outlet property="startTestButton" destination="2u0-nO-9xw" id="h7I-Ra-Fnc"/>
+                <outlet property="testModeButton" destination="YZd-SQ-vgk" id="bz5-mR-7hx"/>
                 <outlet property="startTestButtonCircleView" destination="LXa-8a-bNM" id="aT1-Si-RsX"/>
                 <outlet property="trailingLoopModeSwitcherConstraint" destination="81x-42-Tto" id="RqU-KL-wAh"/>
                 <outlet property="wave2View" destination="OH1-p8-BUs" id="PKX-Ec-mMo"/>

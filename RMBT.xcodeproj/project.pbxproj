@@ -99,6 +99,7 @@
 		66A000022F20000000000003 /* CoverageButtonGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66A000022F20000000000004 /* CoverageButtonGateTests.swift */; };
 		7E9819F45E7330372FF7FDF1 /* Pods_RMBTTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34EAAD260B73771684B942BA /* Pods_RMBTTests.framework */; };
 		84E47A49B75644EAAD976F5A /* SIMInfoSnapshotBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A52344AA25543676788609 /* SIMInfoSnapshotBuilderTests.swift */; };
+		9000AB3B315AB9E2EEEBB06B /* UIButton+ExtendedTapArea.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9648E3AF398E46AE3BF1A9E2 /* UIButton+ExtendedTapArea.swift */; };
 		9BBE11FB131ED439EC173841 /* CellularSnapshotProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7D3BBEDF12B98A0F0759EA6 /* CellularSnapshotProvider.swift */; };
 		A5EC6220FC2679D6070121B6 /* SIMInfoViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 243AF8E44A4D00F1B9A6B503 /* SIMInfoViewModel.swift */; };
 		AA000001303A000000000001 /* Localizable.stringsdict in Resources */ = {isa = PBXBuildFile; fileRef = AA000001303A000000000004 /* Localizable.stringsdict */; };
@@ -473,6 +474,7 @@
 		89CA21386C488DD817CA1DC2 /* Pods-RMBT.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RMBT.debug.xcconfig"; path = "Pods/Target Support Files/Pods-RMBT/Pods-RMBT.debug.xcconfig"; sourceTree = "<group>"; };
 		8BA973DDAECAF68EF2D7E36C /* cs */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = cs; path = "cs.lproj/RMBT-InfoPlist.strings"; sourceTree = "<group>"; };
 		94ACDE3F34869D6346ADEA9F /* FenceFactory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FenceFactory.swift; sourceTree = "<group>"; };
+		9648E3AF398E46AE3BF1A9E2 /* UIButton+ExtendedTapArea.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "UIButton+ExtendedTapArea.swift"; sourceTree = "<group>"; };
 		9A7F9A938932F1FE741D13F7 /* cs */ = {isa = PBXFileReference; includeInIndex = 1; name = cs; path = cs.lproj/terms_conditions_long.html; sourceTree = "<group>"; };
 		9E95B2179B357FF985E9D9D7 /* CoverageHistoryDetailServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoverageHistoryDetailServiceTests.swift; sourceTree = "<group>"; };
 		A0C545CF605E364BCA4F45EA /* Pods-RMBTTest.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RMBTTest.debug.xcconfig"; path = "Pods/Target Support Files/Pods-RMBTTest/Pods-RMBTTest.debug.xcconfig"; sourceTree = "<group>"; };
@@ -1423,6 +1425,7 @@
 				E9B51CCC27243229006ED0C7 /* RMBTIntroLandscapeView.swift */,
 				E9B51CCB27243229006ED0C7 /* RMBTIntroLandscapeView.xib */,
 				494998E22B7E353C0067B3D8 /* TopPopoverView.swift */,
+				9648E3AF398E46AE3BF1A9E2 /* UIButton+ExtendedTapArea.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -2326,6 +2329,7 @@
 				9BBE11FB131ED439EC173841 /* CellularSnapshotProvider.swift in Sources */,
 				A5EC6220FC2679D6070121B6 /* SIMInfoViewModel.swift in Sources */,
 				4987298CEEA3188EA459D916 /* SIMInfoView.swift in Sources */,
+				9000AB3B315AB9E2EEEBB06B /* UIButton+ExtendedTapArea.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

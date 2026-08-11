@@ -445,7 +445,7 @@
 
 "text_ip_address_not_available" = "A cím nem érhető el";
 "start_test_button_help_message" = "Nyomja meg a gombot a teszt elindításához!";
-"RTR-NetTest" = "RTR-NetTest";
+"RTR-NetTest" = "ČTÚ-NetTest";
 
 "Export data" = "Exportálás";
 
@@ -516,3 +516,4 @@
 /* ===== TODO: NEEDS TRANSLATION — Coverage unavailable feedback (English placeholder) ===== */
 "coverage_unavailable_title" = "Signal measurement unavailable";
 "coverage_unavailable_message" = "Signal measurement requires Wi‑Fi to be turned off and good GPS reception. Please adjust and try again.";
+"title_normal_mode" = "Normal mode";

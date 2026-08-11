@@ -445,7 +445,7 @@
 
 "text_ip_address_not_available" = "Die Adresse nicht verfügbar";
 "start_test_button_help_message" = "Drücken Sie den Knopf um den Test zu starten";
-"RTR-NetTest" = "RTR-Netztest";
+"RTR-NetTest" = "ČTÚ-NetTest";
 
 "Export data" = "Exportieren";
 
@@ -515,3 +515,4 @@
 /* ===== TODO: NEEDS TRANSLATION — Coverage unavailable feedback (English placeholder) ===== */
 "coverage_unavailable_title" = "Signal measurement unavailable";
 "coverage_unavailable_message" = "Signal measurement requires Wi‑Fi to be turned off and good GPS reception. Please adjust and try again.";
+"title_normal_mode" = "Normal mode";
