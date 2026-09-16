@@ -19,14 +19,47 @@ struct NetworkCoverageView: View {
         viewModel = NetworkCoverageFactory(database: UserDatabase.shared).makeCoverageViewModel(fences: fences)
     }
 
-    @State private var showStartTestPopup = false
     @State private var showStopTestPopup = false
     @State private var navigationPath = NavigationPath()
     @State private var resultStopReasons: [StopTestReason] = []
     @State private var showsSettings = false
     @State private var isExpertMode = false
+    @State private var didFinishMeasurement = false
 
     var body: some View {
+        Group {
+            switch viewModel.phase {
+            case .idle:
+                CoverageTermsView(
+                    onAccept: { Task { await viewModel.startTest() } },
+                    onDecline: onClose
+                )
+            case .preparing:
+                CoverageReadinessView(
+                    gps: viewModel.gpsReadiness,
+                    network: viewModel.networkReadiness,
+                    onAbort: { Task { await viewModel.stopTest() } }
+                )
+            case .recording, .stopped:
+                recordingBody
+            }
+        }
+        // Whenever the measurement ends — user stop, auto max-duration stop, or the measurement dying —
+        // leave the map instead of stranding the user: show results if anything was recorded, otherwise
+        // return to the start screen. Runs once per presentation.
+        .onChange(of: viewModel.phase) { newPhase in
+            guard newPhase == .stopped, !didFinishMeasurement else { return }
+            didFinishMeasurement = true
+            if viewModel.fences.isEmpty {
+                onClose()
+            } else {
+                resultStopReasons = viewModel.stopTestReasons
+                navigationPath.append("results")
+            }
+        }
+    }
+
+    private var recordingBody: some View {
         NavigationStack(path: $navigationPath) {
             ZStack {
                 FencesMapView(
@@ -51,7 +84,14 @@ struct NetworkCoverageView: View {
                 }
                 .safeAreaInset(edge: .top, spacing: -10) {
                     VStack(spacing: 0) {
-                        CoverageHeader(title: "Network Coverage") { topBarView }
+                        CoverageHeader(
+                            title: "Network Coverage",
+                            // Always offer an action so the user can never get stranded: "Stop" while the
+                            // measurement is recording, otherwise "Close" (e.g. if it auto-stopped or died).
+                            action: viewModel.isStarted
+                                ? .init(title: "Stop", action: { showStopTestPopup = true })
+                                : .init(title: "Close", action: onClose)
+                        ) { topBarView }
 
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(viewModel.warningPopups) { item in
@@ -75,32 +115,13 @@ struct NetworkCoverageView: View {
                     }
                 }
             }
-            .testStartPopup(
-                isPresented: $showStartTestPopup,
-                title: NSLocalizedString("coverage_intro_title", comment: ""),
-                subtitle: NSLocalizedString("coverage_intro_description", comment: ""),
-                onStartTest: {
-                    Task { await viewModel.toggleMeasurement() }
-                },
-                onCancel: onClose
-            )
-            .onAppear {
-                if !viewModel.isStarted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        showStartTestPopup = true
-                    }
-                }
-            }
             .testStopPopup(
                 isPresented: $showStopTestPopup,
                 title: NSLocalizedString("Stop Coverage Test", comment: ""),
                 subtitle: NSLocalizedString("The test will be stopped and results will be sent to the server.", comment: ""),
                 onStopTest: {
-                    Task {
-                        await viewModel.toggleMeasurement()
-                        resultStopReasons = []
-                        navigationPath.append("results")
-                    }
+                    // Stopping flips the phase to .stopped; the .onChange(phase) handler navigates to results.
+                    Task { await viewModel.toggleMeasurement() }
                 }
             )
             .toolbar(.hidden, for: .navigationBar)
@@ -111,23 +132,7 @@ struct NetworkCoverageView: View {
                 }
             }
             .keepScreenAwake(while: viewModel.isStarted)
-            .onChange(of: viewModel.stopTestReasons) { reasons in
-                // Navigate to results when auto-stop reason for insufficient accuracy is recorded
-                if reasons.contains(where: { reason in
-                    if case .insufficientLocationAccuracy = reason { return true }
-                    return false
-                }) {
-                    resultStopReasons = reasons
-                    navigationPath.append("results")
-                }
-            }
         }
-    }
-
-    func verticalSeparator() -> some View {
-        Rectangle()
-            .fill(Color.gray.opacity(0.2))
-            .frame(maxWidth: 1, maxHeight: .infinity, alignment: .center)
     }
 
     func horizontalSeparator() -> some View {
@@ -176,47 +181,38 @@ struct NetworkCoverageView: View {
     }
 
     var topBarView: some View {
-        HStack {
-            HStack(spacing: 0) {
-                VStack(alignment: .leading) {
-                    Text("Technology")
-                        .font(.caption)
-                    Text(viewModel.latestTechnology)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(alignment: .leading) {
-                    Text("Ping")
-                        .font(.caption)
-                    Text(viewModel.latestPing)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(alignment: .leading) {
-                    Text("Loc. accuracy")
-                        .font(.caption)
-                    Text(viewModel.locationAccuracy)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+        // A Grid keeps all four values on a single, shared-height row so they stay vertically
+        // aligned even when a caption wraps to two lines (e.g. German "Standortgenauigkeit" /
+        // "Geschwindigkeit"), which independent VStacks per column cannot guarantee.
+        Grid(horizontalSpacing: 0, verticalSpacing: 4) {
+            GridRow(alignment: .top) {
+                Text("Technology")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Ping")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Loc. accuracy")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(NSLocalizedString("location_dialog_label_speed", comment: ""))
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Spacer()
-
-            verticalSeparator()
-                .frame(height: 44)
-
-            Spacer()
-
-            Button(viewModel.isStarted ? "Stop" : "") {
-                if viewModel.isStarted {
-                    showStopTestPopup = true
-                } else {
-                    showStartTestPopup = true
-                }
+            GridRow(alignment: .top) {
+                Text(viewModel.latestTechnology)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(viewModel.latestPing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(viewModel.locationAccuracy)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(viewModel.speed)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minWidth: 40) // to maintain space when the button text is empty (Start scenario)
-            .tint(.brand)
-            .padding(.horizontal, 16)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, 16)

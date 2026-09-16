@@ -264,8 +264,16 @@ open class ConnectivityService: NSObject { // TODO: rewrite with ControlServerNe
             guard let self = self else { return }
             self.controlServer.getIpv4( success: { [weak self] response in
                 guard let self = self, checkId == self.activeCheckId else { return }
-                self.connectivityInfo.ipv4.connectionAvailable = true
-                self.connectivityInfo.ipv4.externalIp = response.ip
+                // Only report a public IPv4 when the device actually has a local IPv4 address,
+                // so we never show a public address paired with an empty private one.
+                if self.connectivityInfo.ipv4.internalIp != nil {
+                    self.connectivityInfo.ipv4.connectionAvailable = true
+                    self.connectivityInfo.ipv4.externalIp = response.ip
+                } else {
+                    self.log("ipv4 fetch returned external ip without local address; treating as unavailable", checkId: checkId)
+                    self.connectivityInfo.ipv4.connectionAvailable = false
+                    self.connectivityInfo.ipv4.externalIp = nil
+                }
                 self.finishIPv4Check(for: checkId)
             }, error: { [weak self] error in
                 guard let self = self, checkId == self.activeCheckId else { return }
@@ -316,7 +324,7 @@ open class ConnectivityService: NSObject { // TODO: rewrite with ControlServerNe
         self.connectivityInfo.ipv6.externalIp = nil
         self.connectivityInfo.ipv6.connectionAvailable = (self.connectivityInfo.ipv6.internalIp != nil)
         log("ipv6 fetch started (initial available=\(self.connectivityInfo.ipv6.connectionAvailable))", checkId: checkId)
-        
+
         controlServer.getIpv6( success: { [weak self] response in
             guard let self = self, checkId == self.activeCheckId else { return }
             if self.connectivityInfo.ipv6.internalIp != nil {
@@ -493,13 +501,13 @@ extension ConnectivityService {
 
                 observed[interfaceNameFormatted] = entry
             }
-            
-            if RMBTSettings.shared.forceIPv4 {
-                for key in observed.keys {
-                    observed[key]?.ipv6 = nil
-                }
-            }
-            
+
+            // NOTE: The IPv4/IPv6 connectivity status shown on the start screen must reflect the
+            // actual connection and stay independent of any measurement restriction. The restriction
+            // (IPv4-only / IPv6-only) is enforced at the socket layer (see SocketUtils) and via the
+            // control-server base URL — not by hiding addresses here. We therefore deliberately do
+            // NOT strip the "other" version's local address based on forceIPv4/forceIPv6.
+
             freeifaddrs(ifaddr)
         }
         return observed

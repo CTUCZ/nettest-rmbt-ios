@@ -1,0 +1,17 @@
+// App-identity / code-signing build settings for the RMBT app target.
+//
+// Copied to Configs/BuildIdentity.xcconfig by Scripts/update_configurations_from_private.sh
+// (private/Configurations/Configs/BuildIdentity.xcconfig overrides this file when the
+// private submodule is present). These values are consumed via
+// BuildConfig/RMBT-Debug.xcconfig and BuildConfig/RMBT-Release.xcconfig, which are the
+// App target's baseConfigurationReference — do NOT set these keys inline in
+// project.pbxproj, an inline value always wins over an xcconfig value and would silently
+// defeat this override.
+//
+// This is the generic placeholder variant: safe to build with, not tied to any real
+// Apple Developer account or App Store listing.
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = com.example.rmbt
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+PROVISIONING_PROFILE_SPECIFIER =

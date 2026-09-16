@@ -1,0 +1,8 @@
+// Wraps CocoaPods' generated Release xcconfig with our own app-identity overrides layered
+// on top, so DEVELOPMENT_TEAM / PRODUCT_BUNDLE_IDENTIFIER / MARKETING_VERSION /
+// CURRENT_PROJECT_VERSION / PROVISIONING_PROFILE_SPECIFIER never need to be set inline in
+// project.pbxproj (an inline value always wins over an xcconfig one, so they must stay
+// absent there for this override to take effect). This is the RMBT app target's
+// baseConfigurationReference for Release.
+#include "../Pods/Target Support Files/Pods-RMBT/Pods-RMBT.release.xcconfig"
+#include "../Configs/BuildIdentity.xcconfig"

@@ -80,6 +80,12 @@ class RMBTIntroViewController: UIViewController {
         return RMBTConnectivityTracker(delegate: self, stopOnMixed: false)
     }()
 
+    /// Periodically re-runs the connectivity / IP-version status check while the intro screen is
+    /// visible, so a transient probe failure (e.g. the IPv6 /ip host momentarily unreachable)
+    /// recovers on its own without waiting for another user/system event.
+    private var connectivityRefreshTimer: Timer?
+    private let connectivityRefreshInterval: TimeInterval = 20
+
     override var preferredStatusBarStyle: UIStatusBarStyle {
         guard let connectivity = connectivity else { return .default }
         if connectivity.networkType == .cellular || connectivity.networkType == .wifi {
@@ -95,6 +101,11 @@ class RMBTIntroViewController: UIViewController {
 
     private var connectivityInfo: ConnectivityInfo? {
         didSet {
+            if let connectivityInfo {
+                // Cache IPv4/IPv6 reachability from the start-page IP request so the expert
+                // IPv4/IPv6-only restrictions can be gated in Settings and at test start.
+                RMBTIPVersionAvailability.shared.update(with: connectivityInfo)
+            }
             updateConnectivityInfo()
         }
     }
@@ -162,6 +173,7 @@ class RMBTIntroViewController: UIViewController {
 
         NotificationCenter.default.addObserver(self, selector: #selector(forceUpdateNetwork(_:)), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(locationDidUpdate(_:)), name: .RMBTLocationTracker, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(coverageAvailabilityChanged(_:)), name: .RMBTCoverageAvailabilityChanged, object: nil)
 
         RMBTControlServer.shared.updateWithCurrentSettings { [weak self] in
             guard let self = self else { return }
@@ -183,7 +195,14 @@ class RMBTIntroViewController: UIViewController {
 
     @objc private func locationDidUpdate(_ sender: Any) {
         DispatchQueue.main.async { [weak self] in
+            self?.updateLocationTint()
             self?.updateCoverageTint()
+        }
+    }
+
+    @objc private func coverageAvailabilityChanged(_ sender: Any) {
+        DispatchQueue.main.async { [weak self] in
+            self?.currentView.updateCoverageUI()
         }
     }
 
@@ -208,11 +227,25 @@ class RMBTIntroViewController: UIViewController {
             self.connectivityTracker.forceUpdate()
         })
         RMBTSettings.shared.activeMeasurementId = nil
+        startConnectivityRefreshTimer()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         connectivityTracker.stop()
+        stopConnectivityRefreshTimer()
+    }
+
+    private func startConnectivityRefreshTimer() {
+        connectivityRefreshTimer?.invalidate()
+        connectivityRefreshTimer = Timer.scheduledTimer(withTimeInterval: connectivityRefreshInterval, repeats: true) { [weak self] _ in
+            self?.connectivityTracker.forceUpdate()
+        }
+    }
+
+    private func stopConnectivityRefreshTimer() {
+        connectivityRefreshTimer?.invalidate()
+        connectivityRefreshTimer = nil
     }
 
     @objc private func didBecomeActive(_ sender: Any) {
@@ -271,18 +304,19 @@ class RMBTIntroViewController: UIViewController {
             age = "\(Int(timestamp)) s"
         }
 
-        var speedKilometers: Int = 0
+        var speedKilometers: Double = 0
         if location.speed >= 0 {
-            speedKilometers = Int(location.speed * 3.6)
+            speedKilometers = location.speed * 3.6
         }
 
-        let speed = "\(speedKilometers) km/h"
+        let speed = String(format: "%.1f km/h", speedKilometers)
         let horizontalAccuracy = "+/-\(Int(location.horizontalAccuracy)) m"
 
         let locationString = location.dms
         let popupInfo = RMBTPopupInfo(with: .locationIcon, tintColor: tintColor, style: .list, values: [
             RMBTPopupInfo.Value(title: .locationPosition, value: locationString),
             RMBTPopupInfo.Value(title: .locationAccuracy, value: horizontalAccuracy),
+            RMBTPopupInfo.Value(title: "Source", value: location.rmbtSource.rawValue),
             RMBTPopupInfo.Value(title: .locationAge, value: age),
             RMBTPopupInfo.Value(title: .locationAltitude, value: altitude),
             RMBTPopupInfo.Value(title: .locationSpeed, value: speed),
@@ -295,22 +329,21 @@ class RMBTIntroViewController: UIViewController {
 
         let popupInfo = self.locationPopupInfo(with: location, tintColor: tintColor)
         RMBTLocationPopupViewController.presentLocation(with: popupInfo, in: self) { [weak self] vc in
-            vc.info = self?.locationPopupInfo(with: location, tintColor: tintColor)
+            // Re-read the latest fix on every tick instead of reusing the one captured when the
+            // overlay opened; otherwise the age just counts up against a frozen timestamp.
+            guard let self, let current = RMBTLocationTracker.shared.location else { return }
+            vc.info = self.locationPopupInfo(with: current, tintColor: tintColor)
         }
     }
 
     private func coverageTapHandler(_ tintColor: UIColor) {
-        guard coverageCanStart else {
-            UIAlertController.presentAlert(
-                title: NSLocalizedString("coverage_unavailable_title", comment: "Alert title when signal measurement cannot start"),
-                text: NSLocalizedString("coverage_unavailable_message", comment: "Alert message listing signal measurement requirements"),
-                cancelTitle: NSLocalizedString("input_setting_dialog_ok", comment: "OK button"),
-                otherTitle: nil,
-                cancelAction: { _ in },
-                otherAction: nil
-            )
-            return
-        }
+        // The readiness ("preparing") screen now handles waiting for a good GPS fix on a mobile network,
+        // so we no longer block opening the measurement when conditions are not yet met — the button tint
+        // (coverageCanStart) still hints at readiness, but tapping always opens into the readiness screen.
+
+        // Same IPv4-only / IPv6-only availability gate as the speed test.
+        if presentIPVersionAlertIfRestrictionUnsatisfied() { return }
+
         let coverageView = NetworkCoverageView(onClose: { [weak self] in
             self?.dismiss(animated: true)
         })
@@ -349,11 +382,47 @@ class RMBTIntroViewController: UIViewController {
     }
 
     private func startTest() {
+        if presentIPVersionAlertIfRestrictionUnsatisfied() { return }
+
         if isLoopMode {
             self.performSegue(withIdentifier: showLoopModeSettingsSegue, sender: self)
         } else {
             self.startTest(with: nil)
         }
+    }
+
+    /// If an IPv4-only / IPv6-only restriction is active but that IP version is not available on the
+    /// current connection, presents the "not available, check expert settings" alert and returns true
+    /// (the caller should abort). Returns false when there is no blocking restriction.
+    @discardableResult
+    private func presentIPVersionAlertIfRestrictionUnsatisfied() -> Bool {
+        guard !ipVersionRestrictionSatisfied() else { return false }
+        let version = RMBTSettings.shared.forceIPv4 ? "IPv4" : "IPv6"
+        let format = NSLocalizedString("ip_version_not_available_message", comment: "Shown when an IPv4/IPv6-only restriction is active but that IP version is not available on the current connection. %@ is IPv4 or IPv6")
+        UIAlertController.presentAlert(
+            title: nil,
+            text: String(format: format, version),
+            cancelTitle: NSLocalizedString("input_setting_dialog_ok", comment: "OK button"),
+            otherTitle: nil,
+            cancelAction: { _ in },
+            otherAction: nil
+        )
+        return true
+    }
+
+    /// Whether the currently active IP-version restriction (if any) can be satisfied by the
+    /// current connection. Uses the freshest connectivity result, falling back to the cached
+    /// start-page availability.
+    private func ipVersionRestrictionSatisfied() -> Bool {
+        let settings = RMBTSettings.shared
+        let ipv4Available = connectivityInfo?.ipv4.connectionAvailable ?? RMBTIPVersionAvailability.shared.ipv4Available
+        let ipv6Available = connectivityInfo?.ipv6.connectionAvailable ?? RMBTIPVersionAvailability.shared.ipv6Available
+        return RMBTIPVersionAvailability.restrictionSatisfied(
+            forceIPv4: settings.forceIPv4,
+            forceIPv6: settings.forceIPv6,
+            ipv4Available: ipv4Available,
+            ipv6Available: ipv6Available
+        )
     }
 
     private func startTest(with loopModeInfo: RMBTLoopInfo?) {
@@ -402,7 +471,8 @@ class RMBTIntroViewController: UIViewController {
         guard let connectivity = self.connectivityInfo else {
             currentView.ipV4TintColor = .ipNotAvailable
             currentView.ipV6TintColor = .ipNotAvailable
-            currentView.locationTintColor = .ipNotAvailable
+            updateLocationTint()
+            updateCoverageTint()
             return
         }
 
@@ -427,7 +497,7 @@ class RMBTIntroViewController: UIViewController {
             }
         }
 
-        currentView.locationTintColor = !RMBTLocationTracker.shared.isLocationDenied ? .primaryTint : .ipNotAvailable
+        updateLocationTint()
 
         if let type = self.connectivity?.networkTypeDescription,
            let technology = RMBTNetworkTypeConstants.cellularCodeDescriptionDictionary[type] {
@@ -454,15 +524,52 @@ class RMBTIntroViewController: UIViewController {
     }
 
     private var coverageCanStart: Bool {
-        CoverageButtonGate.canStart(
-            accuracy: RMBTLocationTracker.shared.location?.horizontalAccuracy,
+        // A stale fix must not green-light a start (same freshness rule as during the measurement),
+        // and signal measurement requires a genuine GNSS fix, never a Wi‑Fi/cell one.
+        guard
+            let location = RMBTLocationTracker.shared.location,
+            isLocationFreshEnough(location),
+            location.isGenuineGPSFix
+        else {
+            return false
+        }
+        return CoverageButtonGate.canStart(
+            accuracy: location.horizontalAccuracy,
             networkType: connectivity?.networkType,
             minAccuracy: NetworkCoverageFactory.minimumLocationAccuracy
         )
     }
 
+    /// Colours the location (GPS) button, matching Android's four-state scheme. iOS exposes no provider,
+    /// so a fix is classified as genuine GNSS vs Wi‑Fi/cell via `isGenuineGPSFix` (vertical accuracy):
+    ///  - RED    : the location permission is missing (denied)
+    ///  - GREY   : no genuine, fresh GPS fix (no fix, a stale fix, or a network-only fix)
+    ///  - ORANGE : a fresh GPS fix whose accuracy is worse than the signal-measurement limit
+    ///  - GREEN  : a fresh GPS fix within the signal-measurement accuracy limit (start criterion met)
+    private func updateLocationTint() {
+        let tracker = RMBTLocationTracker.shared
+        let color: UIColor
+        if tracker.isLocationDenied {
+            color = .locationRed
+        } else if let location = tracker.location, location.horizontalAccuracy >= 0,
+                  isLocationFreshEnough(location), location.isGenuineGPSFix {
+            color = location.horizontalAccuracy <= NetworkCoverageFactory.minimumLocationAccuracy ? .locationGreen : .locationOrange
+        } else {
+            // No fix, a stale fix, or a Wi‑Fi/cell (network) fix — no usable GPS for signal measurement.
+            color = .locationGrey
+        }
+        currentView.locationTintColor = color
+    }
+
+    /// A fix is only trusted if it is recent enough. Matches Android's
+    /// `maxAgeOfLocationInformationForSignalMeasurementMillis` (and the readiness-screen freshness check),
+    /// so a stale-but-accurate fix is not treated as valid GPS.
+    private func isLocationFreshEnough(_ location: CLLocation) -> Bool {
+        -location.timestamp.timeIntervalSinceNow <= NetworkCoverageFactory.maxLocationFixAge
+    }
+
     private func updateCoverageTint() {
-        currentView.coverageTintColor = coverageCanStart ? .ipAvailable : .coverageUnavailable
+        currentView.coverageTintColor = coverageCanStart ? .locationGreen : .locationGrey
         // Always tappable: when coverage is unavailable the tap surfaces feedback
         // explaining why (see coverageTapHandler) instead of doing nothing.
         currentView.isCoverageEnabled = true
@@ -661,6 +768,13 @@ private extension UIColor {
     static let ipSemiAvailable = UIColor(red: 255.0 / 255.0, green: 186.0 / 255.0, blue: 0, alpha: 1.0)
     static let ipAvailable = UIColor(red: 89.0 / 255.0, green: 178.0 / 255.0, blue: 0, alpha: 1.0)
     static let coverageUnavailable = UIColor.systemGray
+
+    // Location / signal-measurement button states — colours matched to open-rmbt-android
+    // (location_button_* in colors.xml) so both apps look the same.
+    static let locationGreen = UIColor(red: 0x45 / 255.0, green: 0xC3 / 255.0, blue: 0x17 / 255.0, alpha: 1.0)  // #45C317
+    static let locationOrange = UIColor(red: 0xFF / 255.0, green: 0xBE / 255.0, blue: 0x0D / 255.0, alpha: 1.0) // #FFBE0D
+    static let locationGrey = UIColor(red: 0xAE / 255.0, green: 0xAC / 255.0, blue: 0xAC / 255.0, alpha: 1.0)   // #AEACAC
+    static let locationRed = UIColor(red: 0xCF / 255.0, green: 0x0C / 255.0, blue: 0x0C / 255.0, alpha: 1.0)    // #CF0C0C
 }
 
 extension UIColor {
