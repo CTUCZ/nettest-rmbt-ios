@@ -137,13 +137,13 @@ final class RMBTAppDelegate: UIResponder, UIApplicationDelegate {
         RMBTNavigationBar.appearance().isTranslucent = false
 
         UITabBar.appearance().barTintColor = .white
-        UITabBar.appearance().tintColor = UIColor(named: "tintTabbarColor")
+        UITabBar.appearance().tintColor = .brand
         UITabBar.appearance().unselectedItemTintColor = UIColor(named: "tintUnselectedTabbarColor")
 
         // Text color
         RMBTNavigationBar.appearance().titleTextAttributes = [NSAttributedString.Key.foregroundColor: UIColor(red: 66.0/255.0, green: 66.0/255.0, blue: 66.0/255.0, alpha: 1.0)]
 
-        UISwitch.appearance().onTintColor = UIColor.primaryTint
+        UISwitch.appearance().onTintColor = .brand
 
         let tabBarController = window?.rootViewController as? UITabBarController
         let tabTitles = ["Home", "History", "Statistics", "Map"]

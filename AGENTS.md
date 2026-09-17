@@ -62,6 +62,18 @@ Explain clearly your reasoning behind your decisions and pros/cons of chosen sol
 - Avoid force unwraps except in guarded test helpers; prefer `guard let` with logged failures.
 - Keep public/private configs mirrored; add comments when temporary divergence is intentional.
 - Update localization strings for any user-facing copy changes.
+- **Brand colors**: use `Color.brand` / `UIColor.brand` / IB named color `brand` for any branded UI (buttons, tints,
+  switches, highlights), and `UIColor.graphAccent` for speed/ping graph lines. Never hard-code their RGB or create a
+  new green asset — forks rebrand by changing `brand.colorset` and `graphAccent.colorset` in
+  `Resources/Images.xcassets/Colors/` only. Accessors in `Color+Ext.swift` use Xcode's generated asset symbols
+  (`UIColor(resource:)`), so a missing asset fails the build instead of crashing. Status/traffic-light colors (result
+  classes, availability, readiness) are semantic and stay separate, even where they share the brand RGB. Check: all
+  commands below must print nothing.
+  ```sh
+  grep -rnE 'greenButtonBackground|tintTabbarColor|78ED03' Sources Resources
+  grep -rnE 'key="[^"]+" red="0\.3490196[0-9]*" green="0\.6980392[0-9]*" blue="0\.0"' Sources --include='*.storyboard' --include='*.xib'
+  grep -rnE '89(\.0*)? ?/ ?255' Sources --include='*.swift' | grep -v 'ipAvailable'
+  ```
 
 ## Localization workflow
 Translations are maintained by humans and are intentionally behind. When you add or change user-facing copy, follow this workflow so nothing ships as a raw key and translators have a clear backlog.
@@ -136,6 +148,7 @@ This fork tracks `rtr-nettest/open-rmbt-ios` (remote `upstream`) by periodically
 - **Known collision points to re-check after every merge**, even when git reports no conflict on them (line-based merges can silently clobber a non-conflicting line when both sides restructure nearby lines — this already happened once to the project-level provisioning-profile name):
   - `Resources/*.lproj/Localizable.strings` — fork-added placeholder keys vs. upstream's real translations for the same feature; prefer upstream's real translation over the fork's English placeholder when both exist for the same key, then re-append any fork-only keys (e.g. `title_normal_mode`) with an accurate placeholder comment. Watch for duplicate keys introduced by independent additions on both sides.
   - `RMBT.xcodeproj/project.pbxproj` — see **App-identity build settings** above for the App target's Debug/Release settings (now xcconfig-driven, so a merge conflict there just means "keep it deleted, ignore upstream's re-added inline value"). The project-level Release `PROVISIONING_PROFILE_SPECIFIER` should stay `"CTUNetTest App Store Distribution"` if a merge ever touches it.
+  - Brand colors — the fork's blue (`#2362A2`) lives **only** in `Resources/Images.xcassets/Colors/brand.colorset` and `graphAccent.colorset`; upstream ships green there. A merge conflict on those two files means "keep the fork's value". Never re-add fork-specific color assets or `UIColor` constants (the old `blueButtonBackground` / `primaryTint` were removed for this reason). After the merge, run the brand-color guard greps under **Code Style** — any hit is a new upstream call site that bypasses `brand`.
   - `Sources/MainStoryboard.storyboard` / other UI files — check whether upstream removed a fork-visible feature by searching its commit that touches the same section (`git log -S'<marker>' -- <file>`) before assuming a one-sided deletion is safe to keep.
   - After resolving, run: `grep -niE "\bRTR\b|Netztest" RMBT.xcodeproj/project.pbxproj` (plain `RTR` without word boundaries also matches inside unrelated words like "Portrait") and diff branding-relevant keys against the pre-merge branch tip — a hit outside the `RMBTTests` target's own `at.rtr.RMBTTests` internal bundle ID means a silent regression slipped through.
 - A `git merge` does not squash upstream's individual commits — after committing the merge, `git log --graph` still shows every upstream commit as a distinct node. There is no need to "split" a large merge back into its original commits; they are already preserved.

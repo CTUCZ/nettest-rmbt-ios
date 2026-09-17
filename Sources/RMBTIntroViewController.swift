@@ -158,7 +158,15 @@ class RMBTIntroViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        self.navigationController?.view.backgroundColor = UIColor.networkAvailable
+        // From iOS 26 the floating Liquid Glass tab bar no longer hides this view. The intro screen's
+        // bottom area is a pale-blue "page" (the wave / backdrop) on which the white tab bar reads as a
+        // distinct button row, so the strip revealed behind the tab bar uses that same page colour to
+        // continue it seamlessly. Pre-26 keeps the original blue network background.
+        if #available(iOS 26.0, *) {
+            self.navigationController?.view.backgroundColor = .introBottomPage
+        } else {
+            self.navigationController?.view.backgroundColor = UIColor.networkAvailable
+        }
 
         self.modalPresentationCapturesStatusBarAppearance = true
 
@@ -216,6 +224,29 @@ class RMBTIntroViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
             self?.hideStartTestButtonPopup()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateStatusIconTabAlignment()
+    }
+
+    /// Reports the tab-bar items' X centres to the intro view so its status-icon row (IPv4 / IPv6 / Location /
+    /// Coverage) can be aligned exactly under the tab items. The floating Liquid Glass items are not on even
+    /// pill-quarters, so we read their real centres from the (private) item button views — defensively, by
+    /// class name, read-only; if none are found the intro view keeps its own even-quarter estimate.
+    private func updateStatusIconTabAlignment() {
+        guard #available(iOS 26.0, *),
+              let introView = self.view as? RMBTIntroPortraitView,
+              let tabBar = tabBarController?.tabBar else { return }
+        // The item buttons appear in several internal container views, so the same centre shows up more than
+        // once — dedup (to 0.5pt buckets) and sort to get one X per tab item.
+        var seen = Set<Int>()
+        let centers = tabBar.rmbtItemButtonViews()
+            .compactMap { $0.superview?.convert($0.center, to: introView).x }
+            .sorted()
+            .filter { seen.insert(Int(($0 * 2).rounded())).inserted }
+        introView.setTabItemCentersX(centers.isEmpty ? nil : centers)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -728,6 +759,23 @@ extension RMBTIntroViewController: RMBTTestViewControllerDelegate {
     }
 }
 
+private extension UITabBar {
+    /// The private tab-item button views (`_UITabButton` on iOS 26), located by class-name so we do not
+    /// hard-depend on the private type. Used read-only (for their frames); returns [] if the hierarchy differs.
+    /// The same buttons appear in several internal container views, so callers must dedup by position.
+    func rmbtItemButtonViews() -> [UIView] {
+        func collect(_ view: UIView) -> [UIView] {
+            view.subviews.reduce(into: [UIView]()) { result, subview in
+                if String(describing: type(of: subview)).contains("TabButton") {
+                    result.append(subview)
+                }
+                result.append(contentsOf: collect(subview))
+            }
+        }
+        return collect(self)
+    }
+}
+
 private extension String {
     static let noNetworkAvailable = NSLocalizedString("No network connection available", comment: "");
     static let unknown = NSLocalizedString("Unknown", comment: "");
@@ -775,8 +823,4 @@ private extension UIColor {
     static let locationOrange = UIColor(red: 0xFF / 255.0, green: 0xBE / 255.0, blue: 0x0D / 255.0, alpha: 1.0) // #FFBE0D
     static let locationGrey = UIColor(red: 0xAE / 255.0, green: 0xAC / 255.0, blue: 0xAC / 255.0, alpha: 1.0)   // #AEACAC
     static let locationRed = UIColor(red: 0xCF / 255.0, green: 0x0C / 255.0, blue: 0x0C / 255.0, alpha: 1.0)    // #CF0C0C
-}
-
-extension UIColor {
-    static let primaryTint = UIColor(hex: "#2362a2")
 }

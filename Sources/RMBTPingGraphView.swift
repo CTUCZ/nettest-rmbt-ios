@@ -111,7 +111,7 @@ final private class RMBTPingContentGraphView: UIView {
     public var maxXValue: CGFloat = 0
     public var minXValue: CGFloat = 0
     
-    public var columnColor: UIColor = UIColor.primaryTint {
+    public var columnColor: UIColor = UIColor.graphAccent.withAlphaComponent(0.3) {
         didSet {
             self.setNeedsDisplay()
         }
@@ -348,7 +348,7 @@ final private class RMBTPingContentGraphView: UIView {
         }
     }
     
-    public var lineColor: UIColor = UIColor.primaryTint {
+    public var lineColor: UIColor = UIColor.graphAccent {
         didSet {
             contentView.columnColor = lineColor.withAlphaComponent(0.3)
         }
