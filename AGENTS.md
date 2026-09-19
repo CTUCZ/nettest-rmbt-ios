@@ -23,7 +23,14 @@ Explain clearly your reasoning behind your decisions and pros/cons of chosen sol
 - Clean build: `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT clean`
 - Unit tests: `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' -parallel-testing-enabled NO test`
 - Always use `OS=latest` rather than pinning a version — the installed runtime moves (it was 26.1, now 26.5) and a stale
-  pin fails with a confusing "ineligible destination" list.
+  pin fails with a confusing "ineligible destination" list. With the iOS 27 runtime installed, `OS=latest` resolves to
+  27.0, which has no "iPhone 17 Pro" (only 18 Pro / 17 / 17e / Air); the same "ineligible destination" error appears.
+  Then pick a device that exists on that runtime (`xcrun simctl list devices available`) or pass `id=<UDID>`.
+- **UIScene life cycle is mandatory** for apps built with the iOS 27 SDK (otherwise: "UIScene life cycle is required for
+  apps built with this SDK" abort on launch). The app uses `RMBTSceneDelegate` (registered via
+  `UIApplicationSceneManifest` in `public/` and `private/Configurations/RMBT-Info.plist`); UI-lifecycle work
+  (foreground/background, URL opening, window setup) belongs there, not in `RMBTAppDelegate` — those app delegate
+  callbacks are no longer invoked. Keep the manifest in both plists in sync.
 - Focused tests: append `-only-testing:RMBTTests/<TestClass>` (Swift Testing suites: `-only-testing:RMBTTests/<SuiteType>`)
 - **Always pass `-parallel-testing-enabled NO`.** XCTest's parallel testing clones the destination simulator once per
   worker into `~/Library/Developer/XCTestDevices` and never deletes the clones — on another project 79 unattended runs
@@ -120,7 +127,7 @@ Generated destinations — never edit these, edit `private/` or `public/` instea
 - `Configs/RMBTConfig.swift` — untracked (`.gitignore`).
 - `Configs/BuildIdentity.xcconfig` — untracked (`.gitignore`, whole `/Configs/` dir). See **App-identity build settings** below.
 - `Resources/Images.xcassets/AppIcon.appiconset/` — untracked (`.gitignore`).
-- `Resources/RMBT-Info.plist` — **tracked**. Regenerated every build, so it appears as a local modification whenever the active config differs from the committed content. The private version sets the `RTR-NetTest` display name, `rmbtat` URL scheme, `NSLocalNetworkUsageDescription` (DNS QoS test) and `UIBackgroundModes: location` (coverage measurements). **Do not commit it from a public-config build** — that silently strips RTR branding and background location. Revert with `git checkout -- Resources/RMBT-Info.plist`.
+- `Resources/RMBT-Info.plist` — **tracked**. Regenerated every build, so it appears as a local modification whenever the active config differs from the committed content. The private version differs from the public one only in branding: the `RTR-NetTest` display name and `rmbtat` URL scheme. Both configs carry the capability keys `NSLocalNetworkUsageDescription` (DNS QoS test) and `UIBackgroundModes: location` (coverage measurements) — keep them in both, or a fresh clone builds an app without those features. **Do not commit it from a public-config build** — that silently strips RTR branding. Revert with `git checkout -- Resources/RMBT-Info.plist`.
 
 Order matters, and both steps have failure modes that look unrelated to their real cause:
 1. `bundle install` — **must** run on Ruby `>= 3.1, < 5.0`. On macOS system Ruby 2.6 it fails with `Could not find 'bundler' (2.7.2) required by your Gemfile.lock`, because `Gemfile.lock` pins `BUNDLED WITH 2.7.2`. The error names bundler, not Ruby, and following its `gem install bundler:2.7.2` advice also fails. Fix the Ruby, not the bundler. (`Gemfile.lock` still records `RUBY VERSION 3.4.6p54` for reference; it is informational and does not gate the install.)
