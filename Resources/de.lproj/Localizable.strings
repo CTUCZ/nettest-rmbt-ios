@@ -518,5 +518,17 @@
 "signal_readiness_network" = "Network: %@";
 "Abort" = "Abort";
 
+/* ===== TODO: NEEDS TRANSLATION (English placeholder) ===== */
+"preferences_server_selection" = "Server selection";
+"preferences_default_server_selection" = "Default";
+"server_label" = "Server: %@";
+
+"coverage_details_button" = "Details";
+"coverage_segments_title" = "Measurement segments";
+"segment_result_title" = "Segment result";
+
+"preferences_developer_map_server" = "Map server";
+"preferences_override_map_enabled" = "Override map server";
+
 /* ===== TODO: NEEDS TRANSLATION — Fork (ČTÚ) specific (English placeholder) ===== */
 "title_normal_mode" = "Normal mode";

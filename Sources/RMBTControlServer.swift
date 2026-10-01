@@ -19,6 +19,12 @@ public extension Notification.Name {
     /// Posted when the control server's settings response changes the Signal Measurement
     /// (coverage) availability flag, so the Intro screen can refresh its coverage button.
     static let RMBTCoverageAvailabilityChanged = Notification.Name("RMBTCoverageAvailabilityChanged")
+
+    /// Posted when the selectable measurement-server list or the selected server changes (a fresh /settings
+    /// fetch, or a reset because the control server changed). Lets the Intro "Server:" label and an open server
+    /// selection screen refresh, since a control-server change dismisses Settings as a sheet without firing the
+    /// presenter's viewWillAppear.
+    static let RMBTTestServerSelectionChanged = Notification.Name("RMBTTestServerSelectionChanged")
 }
 
 @objc final class RMBTControlServer: NSObject {
@@ -169,6 +175,25 @@ extension RMBTControlServer {
                     } else {
                         Log.logger.info("settings: signal_measurement_available absent/null — leaving coverageFeatureEnabled=\(RMBTSettings.shared.coverageFeatureEnabled) unchanged")
                     }
+
+                    // Selectable measurement servers (developer-mode server selection). Persist the list so the
+                    // settings screen has values immediately, and drop a previously-selected server that the
+                    // control server no longer offers (falls back to the default).
+                    let servers = (set.servers ?? []).compactMap { item -> RMBTMeasurementServer? in
+                        guard let uuid = item.uuid, let name = item.name else { return nil }
+                        return RMBTMeasurementServer(uuid: uuid, name: name)
+                    }
+                    RMBTSettings.shared.availableTestServers = servers
+                    // Record which control server this list belongs to (see updateWithCurrentSettings).
+                    RMBTSettings.shared.serverListControlUrl = self.baseUrl
+                    if let selected = RMBTSettings.shared.selectedTestServerUUID,
+                       !servers.contains(where: { $0.uuid == selected }) {
+                        RMBTSettings.shared.selectedTestServerUUID = nil
+                    }
+                    // Let the Intro label and an open server-selection screen pick up the refreshed list/selection.
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .RMBTTestServerSelectionChanged, object: nil)
+                    }
                 }
 
                 self.completeSettingsRequest(with: .success(()))
@@ -218,14 +243,28 @@ extension RMBTControlServer {
         
         guard let url = URL(string: baseUrl),
            let host = url.host else { failure(nil); return }
-        
+
         uuidKey = "\(storeUUIDKey)\(host)"
 
         if self.uuid == nil,
             let key = uuidKey {
             uuid = KeychainHelper.checkStoredUUID(uuidKey: key)
         }
-        
+
+        // If the active control server changed, the persisted measurement-server list and any selected server
+        // belong to the previous control server and are meaningless here. Reset the selection to default; the list
+        // is reloaded by the getSettings call below. (Persisted comparison so a debug control server kept across
+        // launches is not mistaken for a change; placed after the URL guard so a malformed intermediate URL does
+        // not reset.)
+        if RMBTSettings.shared.resetTestServerSelectionIfControlServerChanged(to: baseUrl) {
+            Log.logger.info("Control server changed to \(baseUrl); reloading measurement server list and resetting selection to default")
+            // Refresh the Intro label / Settings entry now (the selection is already default); the list is replaced
+            // by getSettings below.
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .RMBTTestServerSelectionChanged, object: nil)
+            }
+        }
+
         Log.logger.info("Control Server base url = \(self.baseUrl)")
         
         // get settings of control server

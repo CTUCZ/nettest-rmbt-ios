@@ -123,6 +123,14 @@ struct FenceDetail: Equatable, Identifiable {
     let color: Color
 }
 
+/// One map-legend row: a radio technology's short generation label (e.g. "5G SA") and its base
+/// (full-signal) color. Mirrors Android's `CoverageLegendEntry`.
+struct CoverageLegendEntry: Identifiable, Equatable {
+    var id: String { label }
+    let label: String
+    let color: Color
+}
+
 struct SessionInitializedUpdate: Hashable {
     let timestamp: Date
     let sessionID: String
@@ -227,6 +235,10 @@ struct SessionInitializedUpdate: Hashable {
     }
     private(set) var visibleFenceItems: [FenceItem] = []
     private(set) var fencePolylineSegments: [FencePolylineSegment] = []
+    /// Map legend: one entry per radio technology actually used in this measurement, in a fixed 2G→5G SA order,
+    /// each with the technology's base color. Only reassigned when the set of technologies changes, so the legend
+    /// redraws when a new technology appears rather than on every fence.
+    private(set) var legendEntries: [CoverageLegendEntry] = []
     private(set) var mapRenderMode: FencesRenderMode = .circles
     private(set) var connectionFragmentsCount: Int = 1
 
@@ -312,6 +324,7 @@ struct SessionInitializedUpdate: Hashable {
             fenceItems = initialFenceItems
             visibleFenceItems = initialFenceItems
             updateRenderedFences()
+            updateLegendIfNeeded()
         }
     }
 
@@ -776,14 +789,19 @@ struct SessionInitializedUpdate: Hashable {
         else {
             return .init(isOK: false, text: NSLocalizedString("signal_readiness_gps_stale", comment: ""))
         }
-        let accuracy = Int(location.horizontalAccuracy.rounded())
-        let limit = Int(minimumLocationAccuracy)
-        return accuracy <= limit
-            ? .init(isOK: true, text: NSLocalizedString("signal_readiness_gps_ok", comment: ""))
-            : .init(
+        // Same accuracy gate-keeper the start decision uses (isReadyToBegin → CoverageButtonGate), so a
+        // green row always means the measurement can actually begin — no rounded-vs-raw mismatch.
+        guard CoverageButtonGate.isAccuracyAcceptable(location.horizontalAccuracy, minAccuracy: minimumLocationAccuracy) else {
+            // Round the shown value up so a red row never displays a number that reads as ≤ the limit
+            // (e.g. a raw 15.4 m over a 15 m limit shows "16 m", not a confusing "15 m").
+            let accuracy = Int(location.horizontalAccuracy.rounded(.up))
+            let limit = Int(minimumLocationAccuracy)
+            return .init(
                 isOK: false,
                 text: String(format: NSLocalizedString("signal_readiness_gps_accuracy", comment: ""), accuracy, limit)
             )
+        }
+        return .init(isOK: true, text: NSLocalizedString("signal_readiness_gps_ok", comment: ""))
     }
 
     /// Network readiness, derived only from the connection type. Mobile → OK with the technology name;
@@ -917,6 +935,30 @@ fileprivate extension NetworkCoverageViewModel {
         let newItems = fences.filter { !dirtyFenceIDs.contains($0.id) }.map(fenceItem)
         if fenceItems != newItems {
             fenceItems = newItems
+        }
+        updateLegendIfNeeded()
+    }
+
+    /// Fixed order so the legend always reads 2G → 5G SA regardless of when each technology first appeared.
+    private static let legendRank = ["2G", "3G", "4G", "5G NSA", "5G SA"]
+
+    /// Rebuilds the legend from the technologies actually present in the fences (base technology colors only, no
+    /// grey "no service" bucket). Only reassigns `legendEntries` when the set changed, so SwiftUI redraws the
+    /// legend when a new technology arrives rather than on every fence.
+    func updateLegendIfNeeded() {
+        var seen = Set<String>()
+        var labels: [String] = []
+        for fence in fences {
+            guard let label = fence.significantTechnology?.radioTechnologyDisplayValue,
+                  label != "--", label != "N/A" else { continue }
+            if seen.insert(label).inserted { labels.append(label) }
+        }
+        let ordered = labels.sorted {
+            (Self.legendRank.firstIndex(of: $0) ?? .max) < (Self.legendRank.firstIndex(of: $1) ?? .max)
+        }
+        let newEntries = ordered.map { CoverageLegendEntry(label: $0, color: Color(technology: $0)) }
+        if newEntries != legendEntries {
+            legendEntries = newEntries
         }
     }
 

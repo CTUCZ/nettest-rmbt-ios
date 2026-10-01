@@ -196,6 +196,42 @@ import Clocks
         #expect(sut.selectedFenceDetail?.color == Color(technology: CTRadioAccessTechnologyLTE.radioTechnologyDisplayValue))
     }
 
+    // MARK: - Map legend (technologies used)
+
+    @Test func whenFencesUseSeveralTechnologies_thenLegendListsThemOnceInRankOrderWithTechColors() async throws {
+        let fences = [
+            makeFence(lat: 0.000, lon: 0, technology: CTRadioAccessTechnologyNR, pings: [PingResult(result: .interval(.milliseconds(20)), timestamp: makeDate(offset: 1))]),
+            makeFence(lat: 0.001, lon: 0, technology: CTRadioAccessTechnologyLTE, pings: [PingResult(result: .interval(.milliseconds(30)), timestamp: makeDate(offset: 2))]),
+            makeFence(lat: 0.002, lon: 0, technology: CTRadioAccessTechnologyWCDMA, pings: [PingResult(result: .interval(.milliseconds(40)), timestamp: makeDate(offset: 3))]),
+            makeFence(lat: 0.003, lon: 0, technology: CTRadioAccessTechnologyLTE, pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 4))])
+        ]
+        let sut = makeSUT(fences: fences)
+
+        #expect(sut.legendEntries.map(\.label) == ["3G", "4G", "5G SA"])
+        #expect(sut.legendEntries.allSatisfy { $0.color == Color(technology: $0.label) })
+    }
+
+    @Test func whenFenceHasNoTechnology_thenLegendExcludesIt() async throws {
+        // No connectivity (grey / "no service") must not add a legend entry.
+        let fence = makeFence(technology: nil, pings: [PingResult(result: .interval(.milliseconds(50)), timestamp: makeDate(offset: 1))])
+        let sut = makeSUT(fences: [fence])
+
+        #expect(sut.legendEntries.isEmpty)
+    }
+
+    @Test func whenFenceHasTechnologyButNoCoverage_thenLegendStillListsTheTechnology() async throws {
+        // A fence on a real technology but with only failed pings is grey on the map, yet the technology WAS used,
+        // so the legend lists it with the technology's base color (mirrors Android).
+        let fence = makeFence(
+            technology: CTRadioAccessTechnologyLTE,
+            pings: [PingResult(result: .error, timestamp: makeDate(offset: 1))]
+        )
+        let sut = makeSUT(fences: [fence])
+
+        #expect(sut.legendEntries.map(\.label) == ["4G"])
+        #expect(sut.legendEntries.first?.color == Color(technology: "4G"))
+    }
+
     @Test func whenReceivedPingsWithTimeBeforeFenceChanged_thenTheyAreAssignedToPreviousFence() async throws {
         let sut = makeSUT(updates: [
             makeLocationUpdate  (at: 0, lat: 1, lon: 1),
@@ -1528,6 +1564,47 @@ import Clocks
             #expect(!sut.isStarted)
             #expect(sut.warningPopups.isEmpty)
             #expect(sut.gpsReadiness.isOK == false)
+        }
+
+        @Test func whenAccuracyIsAFractionOverTheLimit_thenGpsReadinessIsNotOKAndDoesNotStart() async throws {
+            // Regression: the readiness row and the start gate share one accuracy gate-keeper. A fix a
+            // fraction over the limit (10.4 m against a 10 m limit) previously rounded to "10 m" and showed
+            // the row green, while the raw start gate refused to begin — green but never starting. They must
+            // agree now: not OK, and no recording.
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0, accuracy: minAccuracy + 0.4)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+
+            #expect(sut.gpsReadiness.isOK == false)
+            #expect(!sut.isStarted)
+            #expect(sut.phase == .preparing)
+        }
+
+        @Test func whenAccuracyIsExactlyAtTheLimit_thenGpsReadinessIsOK() async throws {
+            // Boundary: exactly at the limit is acceptable (raw `<=`); the green row agrees with the gate.
+            let minAccuracy: CLLocationDistance = 10
+            let clock = TestClock()
+            let sut = makeSUT(
+                minimumLocationAccuracy: minAccuracy,
+                updates: [
+                    makeLocationUpdate(at: 0, lat: 1.0, lon: 1.0, accuracy: minAccuracy)
+                ],
+                overlayDelay: 3.0,
+                clock: clock
+            )
+
+            await sut.startTest()
+
+            #expect(sut.gpsReadiness.isOK == true)
         }
 
         @Test func whenDelayElapsedAndLocationAccuracyIsGood_thenInaccurateLocationWarningIsHidden() async throws {

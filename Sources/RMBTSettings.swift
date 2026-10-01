@@ -144,6 +144,11 @@ import Foundation
     // Feature flags
     @objc public dynamic var coverageFeatureEnabled: Bool = false
 
+    // MARK: Test server selection (developer mode)
+    /// UUID of the user-selected measurement server, or nil for the control server's default. Only offered /
+    /// honoured while developer mode (`debugUnlocked`) is on. The available list comes from /settings.
+    @objc public dynamic var selectedTestServerUUID: String?
+
     ///
     private override init() {
         mapOptionsSelection = RMBTMapOptionsSelection()
@@ -239,7 +244,10 @@ import Foundation
             "expertMode",
 
             // Feature flags
-            "coverageFeatureEnabled"
+            "coverageFeatureEnabled",
+
+            // Test server selection (developer mode)
+            "selectedTestServerUUID"
         ])
     }
 
@@ -264,7 +272,87 @@ import Foundation
                 Log.logger.debug("Settings changed for keyPath '\(String(describing: keyPath))' from '\(String(describing: oldValue))' to '\(newValue)'")
             }
 
-            UserDefaults.storeDataFor(key: kp, obj: newValue)
+            // For nil-able settings (e.g. `selectedTestServerUUID` cleared when the default server is chosen), KVO
+            // reports the new value as `NSNull`. Storing that in UserDefaults aborts the app (CFPrefs rejects it), so
+            // clear the key instead.
+            if newValue is NSNull {
+                UserDefaults.removeDataFor(key: kp)
+            } else {
+                UserDefaults.storeDataFor(key: kp, obj: newValue)
+            }
         }
+    }
+}
+
+// MARK: - Test server selection
+
+extension RMBTSettings {
+    private static let availableTestServersKey = "availableTestServers"
+    private static let serverListControlUrlKey = "serverListControlUrl"
+
+    /// Measurement servers offered by the control server (from the /settings response). Persisted so the
+    /// selection UI has values even before a fresh fetch. Stored as a property-list array of dictionaries.
+    var availableTestServers: [RMBTMeasurementServer] {
+        get {
+            let raw = UserDefaults.appDefaults.array(forKey: Self.availableTestServersKey) as? [[String: String]] ?? []
+            return raw.compactMap(RMBTMeasurementServer.init(dictionary:))
+        }
+        set {
+            UserDefaults.appDefaults.set(newValue.map(\.dictionaryValue), forKey: Self.availableTestServersKey)
+        }
+    }
+
+    /// The control-server base URL that the current `availableTestServers` / `selectedTestServerUUID` belong to.
+    /// Server UUIDs are only meaningful for the control server that issued them, so when the active control server
+    /// differs from this the list is reloaded and the selection is reset to default. Persisted so a debug control
+    /// server that stays configured across launches is not mistaken for a change.
+    var serverListControlUrl: String? {
+        get { UserDefaults.appDefaults.string(forKey: Self.serverListControlUrlKey) }
+        set {
+            if let newValue = newValue {
+                UserDefaults.appDefaults.set(newValue, forKey: Self.serverListControlUrlKey)
+            } else {
+                UserDefaults.appDefaults.removeObject(forKey: Self.serverListControlUrlKey)
+            }
+        }
+    }
+
+    /// The currently selected server, or nil when the default is in use (or the selection is no longer offered).
+    var selectedTestServer: RMBTMeasurementServer? {
+        guard let uuid = selectedTestServerUUID else { return nil }
+        return availableTestServers.first { $0.uuid == uuid }
+    }
+
+    /// Resets the selected server to default when the active control server differs from the one the current list
+    /// belongs to (server UUIDs are only valid for the control server that issued them). The list itself is left in
+    /// place and gets atomically replaced by the refetch from the new control server, so the UI never shows an empty
+    /// list (and a failed refetch keeps the previous list rather than blanking it). Idempotent for an unchanged
+    /// server.
+    /// - Returns: true when a reset happened.
+    @discardableResult
+    func resetTestServerSelectionIfControlServerChanged(to controlUrl: String) -> Bool {
+        guard serverListControlUrl != controlUrl else { return false }
+        selectedTestServerUUID = nil
+        serverListControlUrl = controlUrl
+        return true
+    }
+}
+
+/// A selectable measurement (test) server from the control server's `/settings` response (`servers` array,
+/// each `{ name, uuid }`). Used for the developer-mode server selection and the start-screen server label.
+struct RMBTMeasurementServer: Equatable {
+    let uuid: String
+    let name: String
+
+    var dictionaryValue: [String: String] { ["uuid": uuid, "name": name] }
+
+    init(uuid: String, name: String) {
+        self.uuid = uuid
+        self.name = name
+    }
+
+    init?(dictionary: [String: String]) {
+        guard let uuid = dictionary["uuid"], let name = dictionary["name"] else { return nil }
+        self.init(uuid: uuid, name: name)
     }
 }

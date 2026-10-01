@@ -152,6 +152,17 @@ class RMBTIntroViewController: UIViewController {
         } completion: { _ in
             self.updateStates()
             self.currentView.updateLoopModeUI()
+            self.updateServerSelectionLabel()
+        }
+    }
+
+    /// Shows "Server: <name>" on the start screen when developer mode is on and a non-default measurement
+    /// server is selected; hides it otherwise. Mirrors Android's `HomeViewState`.
+    private func updateServerSelectionLabel() {
+        if RMBTSettings.shared.debugUnlocked, let server = RMBTSettings.shared.selectedTestServer {
+            currentView.serverName = server.name
+        } else {
+            currentView.serverName = nil
         }
     }
 
@@ -182,6 +193,7 @@ class RMBTIntroViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(forceUpdateNetwork(_:)), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(locationDidUpdate(_:)), name: .RMBTLocationTracker, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(coverageAvailabilityChanged(_:)), name: .RMBTCoverageAvailabilityChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(testServerSelectionChanged(_:)), name: .RMBTTestServerSelectionChanged, object: nil)
 
         RMBTControlServer.shared.updateWithCurrentSettings { [weak self] in
             guard let self = self else { return }
@@ -211,6 +223,15 @@ class RMBTIntroViewController: UIViewController {
     @objc private func coverageAvailabilityChanged(_ sender: Any) {
         DispatchQueue.main.async { [weak self] in
             self?.currentView.updateCoverageUI()
+        }
+    }
+
+    /// The measurement-server list or selection changed (fresh /settings fetch, or reset because the control server
+    /// changed). Refresh the "Server:" label — needed because a control-server change dismisses Settings as a sheet,
+    /// which does not fire this screen's viewWillAppear.
+    @objc private func testServerSelectionChanged(_ sender: Any) {
+        DispatchQueue.main.async { [weak self] in
+            self?.updateServerSelectionLabel()
         }
     }
 
@@ -253,6 +274,7 @@ class RMBTIntroViewController: UIViewController {
         super.viewWillAppear(animated)
         currentView.updateLoopModeUI()
         currentView.updateCoverageUI()
+        updateServerSelectionLabel()
         self.connectivityTracker.start()
         RMBTLocationTracker.shared.startAfterDeterminingAuthorizationStatus({
             self.connectivityTracker.forceUpdate()
@@ -700,6 +722,7 @@ extension RMBTIntroViewController: RMBTSettingsViewControllerDelegate {
     func settingsDidChanged(in viewController: RMBTSettingsViewController) {
         currentView.updateLoopModeUI()
         currentView.updateCoverageUI()
+        updateServerSelectionLabel()
     }
 }
 
