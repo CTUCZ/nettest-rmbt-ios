@@ -24,7 +24,7 @@ class RMBTSpeedTest: XCTestCase {
         XCTAssertEqual(RMBTSpeedMbpsString(154), "0.15 Mbps")
         XCTAssertEqual(RMBTSpeedMbpsString(155), "0.16 Mbps")
         
-        XCTAssertEqual(RMBTSpeedMbpsString(123000), "120 Mbps")
+        XCTAssertEqual(RMBTSpeedMbpsString(123000), "123 Mbps") // above 10 Mbit/s: full integer, not 2 sig figs
         
         XCTAssertEqual(RMBTSpeedMbpsString(1250), "1.2 Mbps")
     }
