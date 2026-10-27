@@ -19,13 +19,14 @@ Explain clearly your reasoning behind your decisions and pros/cons of chosen sol
 - **Private data**: Secrets and branded assets live under `private/`; never commit them publicly.
 
 ## Commands
-- Build (simulator default): `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' build`
+- Build (simulator default): `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' build`
 - Clean build: `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT clean`
-- Unit tests: `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' -parallel-testing-enabled NO test`
+- Unit tests: `xcodebuild -workspace RMBT.xcworkspace -scheme RMBT -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' -parallel-testing-enabled NO test`
 - Always use `OS=latest` rather than pinning a version — the installed runtime moves (it was 26.1, now 26.5) and a stale
-  pin fails with a confusing "ineligible destination" list. With the iOS 27 runtime installed, `OS=latest` resolves to
-  27.0, which has no "iPhone 17 Pro" (only 18 Pro / 17 / 17e / Air); the same "ineligible destination" error appears.
-  Then pick a device that exists on that runtime (`xcrun simctl list devices available`) or pass `id=<UDID>`.
+  pin fails with a confusing "ineligible destination" list. The default device is iPhone 18 Pro because `OS=latest` now
+  resolves to iOS 27.0, which has no "iPhone 17 Pro" (only 18 Pro / 17 / 17e / Air). If a future runtime drops the
+  default device, the same "ineligible destination" error appears — pick a device that exists on that runtime
+  (`xcrun simctl list devices available`) or pass `id=<UDID>`.
 - **UIScene life cycle is mandatory** for apps built with the iOS 27 SDK (otherwise: "UIScene life cycle is required for
   apps built with this SDK" abort on launch). The app uses `RMBTSceneDelegate` (registered via
   `UIApplicationSceneManifest` in `public/` and `private/Configurations/RMBT-Info.plist`); UI-lifecycle work
@@ -116,7 +117,7 @@ Translations are maintained by humans and are intentionally behind. When you add
 ## Environment
 - Use Homebrew Ruby; the `Gemfile` allows `>= 3.1, < 5.0`, so both the 3.x series and Ruby 4.0.x work. Update PATH via `eval "$(/opt/homebrew/bin/brew shellenv)"` then prepend `/opt/homebrew/opt/ruby/bin`. Note that Homebrew's `ruby`/`ruby@3.4` opt symlinks may point at Ruby 4.0.x after an upgrade — that is fine for this project; verified `bundle install` + `bundle exec pod` + `xcodebuild` all succeed on 4.0.6.
 - CocoaPods must run through Bundler to match the pinned version in `Gemfile.lock`. Run `bundle install` once after a fresh clone; gems land in `./vendor/bundle` (per `.bundle/config`).
-- Xcode 26+, iOS deployment target 17.0+. Simulator defaults to iPhone 17 Pro at `OS=latest` (visionOS style naming by Apple).
+- Xcode 26+, iOS deployment target 17.0+. Simulator defaults to iPhone 18 Pro at `OS=latest` (visionOS style naming by Apple).
 
 ### Fresh-clone setup
 A clean clone builds with no private access — `Scripts/update_configurations_from_private.sh` falls back to `public/Configurations/` whenever the `private/` submodule is absent or empty. **Clone without `--recursive`** unless you have access to `open-rmbt-ios-private`, otherwise the clone exits non-zero on a submodule SSH failure (the main worktree is still usable).

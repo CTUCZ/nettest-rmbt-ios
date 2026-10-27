@@ -120,6 +120,12 @@ struct FenceDetail: Equatable, Identifiable {
     let date: String
     let technology: String
     let averagePing: String
+    /// Signal strength, e.g. "-87 dBm". Empty when no signal was recorded (always empty for
+    /// iOS-measured fences; set only for Android-synced history). An empty value hides the row.
+    let signal: String
+    /// Travel velocity, e.g. "42 km/h". Empty when the velocity is unknown or below the
+    /// 0.9 m/s walking-noise threshold, which hides the row.
+    let velocity: String
     let color: Color
 }
 
@@ -942,13 +948,17 @@ fileprivate extension NetworkCoverageViewModel {
     /// Fixed order so the legend always reads 2G → 5G SA regardless of when each technology first appeared.
     private static let legendRank = ["2G", "3G", "4G", "5G NSA", "5G SA"]
 
-    /// Rebuilds the legend from the technologies actually present in the fences (base technology colors only, no
-    /// grey "no service" bucket). Only reassigns `legendEntries` when the set changed, so SwiftUI redraws the
-    /// legend when a new technology arrives rather than on every fence.
+    /// Rebuilds the legend from the technologies actually drawn in their color on the map. Fences drawn grey
+    /// because they have no coverage (no successful ping — see `Fence.isNoCoverage`) are skipped, so a technology
+    /// is listed only when at least one of its points is shown in its color. This avoids e.g. a yellow "2G" entry
+    /// when every 2G point on the map is actually grey. Only reassigns `legendEntries` when the set changed, so
+    /// SwiftUI redraws the legend when a new technology arrives rather than on every fence.
     func updateLegendIfNeeded() {
         var seen = Set<String>()
         var labels: [String] = []
         for fence in fences {
+            // Skip grey (no-coverage) fences: their technology isn't drawn in its color on the map.
+            guard !fence.isNoCoverage else { continue }
             guard let label = fence.significantTechnology?.radioTechnologyDisplayValue,
                   label != "--", label != "N/A" else { continue }
             if seen.insert(label).inserted { labels.append(label) }
@@ -1297,12 +1307,28 @@ extension CLLocationCoordinate2D: @retroactive Equatable, @retroactive Hashable 
 }
 
 extension FenceDetail {
+    /// Minimum speed (m/s) at which velocity is shown. Below this the GPS reading is dominated by
+    /// standing/walking noise, so the velocity row is hidden.
+    static let minVelocityMetersPerSecond: CLLocationSpeed = 0.9
+
     init(fence: Fence, selectedItemDateFormatter: DateFormatter) {
         id = fence.id
         date = selectedItemDateFormatter.string(from: fence.dateEntered)
         technology = fence.significantTechnology?.radioTechnologyDisplayValue ?? "N/A"
         averagePing = fence.averagePing.map { "\($0) ms" } ?? ""
+        signal = fence.signal.map { "\($0) dBm" } ?? ""
+        velocity = Self.velocityDisplayValue(for: fence)
         color = Color(fence: fence)
+    }
+
+    /// Velocity in km/h (rounded integer, matching Android's `Math.round(speedMps * 3.6)`), or an
+    /// empty string when the speed is unknown or below `minVelocityMetersPerSecond`.
+    private static func velocityDisplayValue(for fence: Fence) -> String {
+        guard let speed = fence.velocityMetersPerSecond, speed >= minVelocityMetersPerSecond else {
+            return ""
+        }
+        let kmh = Int((speed * 3.6).rounded())
+        return "\(kmh) km/h"
     }
 }
 
