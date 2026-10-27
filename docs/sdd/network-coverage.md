@@ -2,6 +2,8 @@
 
 This document reflects the current behavior verified by unit tests in `RMBTTests/NetworkCoverage/` and the production code in `Sources/NetworkCoverage/` (as of the current repository state).
 
+The Signal Measurement entry point is temporarily disabled for the App Store release. Its activation handlers are commented out, the home-screen button stays hidden even for an existing enabled setting, and the app no longer declares the `location` background mode. The implementation described below remains in the repository for future restoration.
+
 ## Contents
 - Overview
 - Architecture

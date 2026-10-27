@@ -69,16 +69,16 @@ Debug settings are stored in iOS UserDefaults and are not committed to the repos
 
 ## Network Coverage Feature Flag
 
-The Network Coverage screen is hidden by default and can be enabled via a separate secret code:
+Signal Measurement is temporarily unavailable because the app no longer declares background location support. The home-screen entry point stays hidden even if the feature flag was previously enabled. The activation code and server-driven toggle handlers are commented out for future restoration.
+
+The previous activation flow was:
 
 - Perform the same 10-tap gesture on the version label in Settings.
 - Enter the coverage activation code defined in `RMBTConfig`:
   - `RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE` to enable
   - `RMBTConfig.DEACTIVATE_COVERAGE_FEATURE_CODE` to disable
 
-Notes
-- Changes may require restarting the app to reflect on the Intro screen.
-- The coverage entry button on the home screen remains hidden unless this flag is enabled.
+When restoring the feature, restore the background location mode in both configuration plists and re-enable the handlers and entry point together.
 
 ## Security Note
 

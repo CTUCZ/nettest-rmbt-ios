@@ -161,20 +161,18 @@ extension RMBTControlServer {
                         self.termsAndConditions = tos
                     }
 
-                    // Server-driven Signal Measurement (coverage) availability.
-                    // Mirrors the enable/disable secret code (it persists `coverageFeatureEnabled`)
-                    // but shows no confirmation popup. A missing key or a null value leaves the
-                    // current setting untouched; only an explicit true/false changes it.
-                    if let available = set.signalMeasurementAvailable {
-                        let current = RMBTSettings.shared.coverageFeatureEnabled
-                        Log.logger.info("settings: signal_measurement_available=\(available), current coverageFeatureEnabled=\(current)")
-                        if available != current {
-                            RMBTSettings.shared.coverageFeatureEnabled = available
-                            NotificationCenter.default.post(name: .RMBTCoverageAvailabilityChanged, object: nil)
-                        }
-                    } else {
-                        Log.logger.info("settings: signal_measurement_available absent/null — leaving coverageFeatureEnabled=\(RMBTSettings.shared.coverageFeatureEnabled) unchanged")
-                    }
+                    // Signal Measurement is temporarily unavailable while the location background mode is removed.
+                    // Restore this handler together with the background mode and the home-screen entry point.
+//                    if let available = set.signalMeasurementAvailable {
+//                        let current = RMBTSettings.shared.coverageFeatureEnabled
+//                        Log.logger.info("settings: signal_measurement_available=\(available), current coverageFeatureEnabled=\(current)")
+//                        if available != current {
+//                            RMBTSettings.shared.coverageFeatureEnabled = available
+//                            NotificationCenter.default.post(name: .RMBTCoverageAvailabilityChanged, object: nil)
+//                        }
+//                    } else {
+//                        Log.logger.info("settings: signal_measurement_available absent/null — leaving coverageFeatureEnabled=\(RMBTSettings.shared.coverageFeatureEnabled) unchanged")
+//                    }
 
                     // Selectable measurement servers (developer-mode server selection). Persist the list so the
                     // settings screen has values immediately, and drop a previously-selected server that the

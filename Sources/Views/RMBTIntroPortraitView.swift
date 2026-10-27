@@ -392,8 +392,10 @@ class RMBTIntroPortraitView: UIView, XibLoadable {
 
     // MARK: - Feature flags
     func updateCoverageUI() {
-        // Hide the Coverage button unless explicitly enabled via secret code
-        self.coverageImageView.isHidden = !RMBTSettings.shared.coverageFeatureEnabled
+        // Keep Signal Measurement hidden even when an older install has the flag persisted as true.
+        self.coverageImageView.isHidden = true
+        // Restore with the background location mode and the activation handlers.
+//        self.coverageImageView.isHidden = !RMBTSettings.shared.coverageFeatureEnabled
     }
 
     func updateLoopModeUI() {

@@ -1,5 +1,7 @@
 ## Server-driven Signal Measurement availability via the settings response
 
+**Temporarily suspended:** The response is still parsed, but its availability handler and the secret-code handler are commented out. The home-screen entry point stays hidden even for an existing saved `coverageFeatureEnabled = true`. The scenarios below describe the behavior to restore along with the `location` background mode.
+
 ```gherkin
 Feature: Enable/disable the Signal Measurement feature from the control-server settings
 

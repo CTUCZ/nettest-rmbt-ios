@@ -778,27 +778,28 @@ extension RMBTSettingsViewController {
                 return
             }
 
-            // New: Network Coverage feature flag codes
-            if code == RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE || code == RMBTConfig.DEACTIVATE_COVERAGE_FEATURE_CODE {
-                let enableCoverage = code == RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE
-                self.settings.coverageFeatureEnabled = enableCoverage
-
-                // Confirmation alert with default system "OK" button
-                let title = NSLocalizedString("Network Coverage", comment: "Alert title for coverage feature toggle")
-                let message = enableCoverage
-                    ? NSLocalizedString("The Signal Measurement feature has been enabled.", comment: "Signal Measurement enabled message")
-                    : NSLocalizedString("The Signal Measurement feature has been disabled.", comment: "Signal Measurement disabled message")
-
-                _ = UIAlertController.presentAlert(title: title,
-                                                    text: message,
-                                                    cancelTitle: NSLocalizedString("input_setting_dialog_ok", comment: "OK button"),
-                                                    otherTitle: nil,
-                                                    cancelAction: { _ in },
-                                                    otherAction: nil)
-
-                // No immediate UI in Settings depends on this flag; Intro screen updates on return
-                return
-            }
+            // Signal Measurement is temporarily unavailable while the location background mode is removed.
+            // Restore this code together with the background mode and the home-screen entry point.
+//            if code == RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE || code == RMBTConfig.DEACTIVATE_COVERAGE_FEATURE_CODE {
+//                let enableCoverage = code == RMBTConfig.ACTIVATE_COVERAGE_FEATURE_CODE
+//                self.settings.coverageFeatureEnabled = enableCoverage
+//
+//                // Confirmation alert with default system "OK" button
+//                let title = NSLocalizedString("Network Coverage", comment: "Alert title for coverage feature toggle")
+//                let message = enableCoverage
+//                    ? NSLocalizedString("The Signal Measurement feature has been enabled.", comment: "Signal Measurement enabled message")
+//                    : NSLocalizedString("The Signal Measurement feature has been disabled.", comment: "Signal Measurement disabled message")
+//
+//                _ = UIAlertController.presentAlert(title: title,
+//                                                    text: message,
+//                                                    cancelTitle: NSLocalizedString("input_setting_dialog_ok", comment: "OK button"),
+//                                                    otherTitle: nil,
+//                                                    cancelAction: { _ in },
+//                                                    otherAction: nil)
+//
+//                // No immediate UI in Settings depends on this flag; Intro screen updates on return
+//                return
+//            }
         }, textFieldConfiguration: nil)
     }
     

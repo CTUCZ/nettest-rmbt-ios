@@ -623,9 +623,10 @@ class RMBTIntroViewController: UIViewController {
 
     private func updateCoverageTint() {
         currentView.coverageTintColor = coverageCanStart ? .locationGreen : .locationGrey
-        // Always tappable: when coverage is unavailable the tap surfaces feedback
-        // explaining why (see coverageTapHandler) instead of doing nothing.
-        currentView.isCoverageEnabled = true
+        // Signal Measurement is temporarily unavailable without the background location mode.
+        currentView.isCoverageEnabled = false
+        // Normally the button stays tappable to explain why a measurement cannot start.
+//        currentView.isCoverageEnabled = true
     }
 
     private var networkName: String? {

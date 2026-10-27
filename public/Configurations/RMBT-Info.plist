@@ -75,9 +75,5 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This permission is required for the DNS QoS test.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>location</string>
-	</array>
 </dict>
 </plist>

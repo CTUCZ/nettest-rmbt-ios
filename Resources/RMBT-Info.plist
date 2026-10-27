@@ -54,10 +54,6 @@
 			</array>
 		</dict>
 	</dict>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>location</string>
-	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>Launch Screen</string>
 	<key>UIPrerenderedIcon</key>
